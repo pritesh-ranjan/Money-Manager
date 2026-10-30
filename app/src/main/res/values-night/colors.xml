@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Notification Quick Add Colors (Dark Mode) -->
+    <color name="notification_icon_income">#4CD964</color>
+    <color name="notification_btn_bg_income">#1C3624</color>
+    <color name="notification_btn_ripple_income">#404CD964</color>
+
+    <color name="notification_icon_transfer">#387AFF</color>
+    <color name="notification_btn_bg_transfer">#182B4D</color>
+    <color name="notification_btn_ripple_transfer">#40387AFF</color>
+
+    <color name="notification_icon_expense">#FF5A5F</color>
+    <color name="notification_btn_bg_expense">#3D1B1D</color>
+    <color name="notification_btn_ripple_expense">#40FF5A5F</color>
+</resources>

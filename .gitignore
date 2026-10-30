@@ -1,0 +1,43 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+captures/
+.externalNativeBuild
+.cxx
+local.properties
+
+# Kotlin & Gradle
+.kotlin/
+build/
+app/build/
+
+# Built binaries & packages
+*.apk
+*.ap_
+*.aab
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Keystore & Signing Credentials
+*.jks
+*.keystore
+keystore.properties
+/keystore/
+
+# Financial Database & Backup files (Prevent Data Leakage)
+*.mmbak
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm

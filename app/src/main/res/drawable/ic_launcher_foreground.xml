@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Soft Drop Shadow Behind Wallet -->
+    <path
+        android:fillColor="#55000000"
+        android:pathData="M34,37h40c4.42,0 8,3.58 8,8v26c0,4.42 -3.58,8 -8,8H34c-4.42,0 -8,-3.58 -8,-8V45c0,-4.42 3.58,-8 8,-8z" />
+
+    <!-- Back Card Peeking Out (Income Green Accent Card) -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M35,28h31c3.31,0 6,2.69 6,6v8H29v-8c0,-3.31 2.69,-6 6,-6z" />
+
+    <!-- Secondary Card Peeking Out (Sky Blue Accent) -->
+    <path
+        android:fillColor="#4A9BF5"
+        android:pathData="M39,31h32c3.31,0 6,2.69 6,6v6H33v-6c0,-3.31 2.69,-6 6,-6z" />
+
+    <!-- Main Wallet Body (Coral Gradient) -->
+    <path android:pathData="M32,36h44c4.42,0 8,3.58 8,8v26c0,4.42 -3.58,8 -8,8H32c-4.42,0 -8,-3.58 -8,-8V44c0,-4.42 3.58,-8 8,-8z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="84"
+                android:endY="78"
+                android:startX="24"
+                android:startY="36"
+                android:type="linear">
+                <item
+                    android:color="#FF7A6B"
+                    android:offset="0.0" />
+                <item
+                    android:color="#FF6353"
+                    android:offset="0.5" />
+                <item
+                    android:color="#E04335"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Wallet Top Edge Highlight -->
+    <path
+        android:fillColor="#33FFFFFF"
+        android:pathData="M32,36h44c4.42,0 8,3.58 8,8v1.5c0,-4.42 -3.58,-8 -8,-8H32c-4.42,0 -8,3.58 -8,8V44c0,-4.42 3.58,-8 8,-8z" />
+
+    <!-- Dark AMOLED Clasp / Strap on Right Side -->
+    <path
+        android:fillColor="#16161E"
+        android:pathData="M68,50h16v14H68c-3.87,0 -7,-3.13 -7,-7s3.13,-7 7,-7z"
+        android:strokeWidth="1.2"
+        android:strokeColor="#33FFFFFF" />
+
+    <!-- Clasp Metallic Button (Gold/Emerald indicator) -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M68.5,57m-3.2,0a3.2,3.2 0,1 1,6.4 0a3.2,3.2 0,1 1,-6.4 0" />
+
+    <!-- Crisp White Rupee Symbol (₹) on Left of Wallet -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,46h16v3.2H47.8c0.9,0.9 1.5,2.1 1.7,3.5H52v3.1h-2.5c-0.4,3.4 -3.1,5.9 -6.8,6.2l6.9,8h-4.3l-6.6,-7.8v-2.8h3.7c1.9,0 3.4,-1.1 3.8,-2.6H36v-3.1h10.1c-0.4,-1.4 -1.8,-2.5 -3.7,-2.5H36V46z" />
+</vector>
