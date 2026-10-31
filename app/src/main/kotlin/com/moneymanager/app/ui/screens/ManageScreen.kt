@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Delete
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
@@ -53,7 +55,8 @@ enum class SettingsSubScreen {
     APPEARANCE,
     SECURITY,
     TAGS,
-    BACKUP
+    BACKUP,
+    INSIGHTS_CONFIG
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -260,6 +263,20 @@ fun ManageScreen(
                                     )
                                 },
                                 onClick = { currentSubScreen = SettingsSubScreen.TAGS }
+                            )
+
+                            OneUiInsetDivider(startIndent = 52.dp)
+
+                            OneUiListRow(
+                                title = "Insights and detection",
+                                subtitle = "Anomaly sensitivity, subscriptions & auto-tagging",
+                                leadingContent = {
+                                    OneUiIconBadge(
+                                        icon = Icons.Default.Analytics,
+                                        backgroundColor = OneUiTheme.colors.badgeTeal
+                                    )
+                                },
+                                onClick = { currentSubScreen = SettingsSubScreen.INSIGHTS_CONFIG }
                             )
                         }
                     }
@@ -802,6 +819,274 @@ fun ManageScreen(
                                     restoreLauncher.launch("*/*")
                                 }
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        SettingsSubScreen.INSIGHTS_CONFIG -> {
+            val detectorConfig by viewModel.detectorConfig.collectAsState()
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(OneUiTheme.colors.background)
+                    .statusBarsPadding()
+            ) {
+                OneUiSubScreenTopBar(
+                    title = "Insights & Detection",
+                    onBack = { currentSubScreen = SettingsSubScreen.ROOT }
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Card 1: Approach A Automatic Tagging
+                    item {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
+                        ) {
+                            OneUiListRow(
+                                title = "Auto-tag recurring transactions",
+                                subtitle = "Automatically attach #Subscription, #SIP, #Recurring Deposit, or #EMI tags when confidence ≥ 80%",
+                                subtitleColor = OneUiTheme.colors.textSecondary,
+                                trailingContent = {
+                                    OneUiSwitch(
+                                        checked = detectorConfig.autoTagEnabled,
+                                        onCheckedChange = {
+                                            viewModel.updateDetectorConfig(detectorConfig.copy(autoTagEnabled = it))
+                                        },
+                                        showVerticalDivider = true
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    // Card 2: Anomaly Sensitivity (MAD Robust Z-Score)
+                    item {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            Text(
+                                text = "ANOMALY SENSITIVITY (MAD ROBUST Z)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = OneUiTheme.colors.textMuted
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Outlier Cutoff (Z-Score)",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = OneUiTheme.colors.textPrimary
+                                )
+                                Text(
+                                    text = "${String.format("%.1f", detectorConfig.robustZThreshold)}σ",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.primaryAccent
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OneUiSlider(
+                                value = detectorConfig.robustZThreshold.toFloat(),
+                                onValueChange = {
+                                    val rounded = (Math.round(it * 10.0) / 10.0)
+                                    viewModel.updateDetectorConfig(detectorConfig.copy(robustZThreshold = rounded))
+                                },
+                                valueRange = 2.0f..6.0f
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            OneUiInsetDivider()
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Historical Lookback Window",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = OneUiTheme.colors.textPrimary
+                                )
+                                Text(
+                                    text = "${detectorConfig.lookbackMonths} Months",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.primaryAccent
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OneUiSlider(
+                                value = detectorConfig.lookbackMonths.toFloat(),
+                                onValueChange = {
+                                    viewModel.updateDetectorConfig(detectorConfig.copy(lookbackMonths = it.toInt()))
+                                },
+                                valueRange = 3.0f..6.0f
+                            )
+                        }
+                    }
+
+                    // Card 3: Spikes & Duplicates
+                    item {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            Text(
+                                text = "CATEGORY SPIKES & DUPLICATES",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = OneUiTheme.colors.textMuted
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Category Surge Spike %",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = OneUiTheme.colors.textPrimary
+                                )
+                                Text(
+                                    text = "+${detectorConfig.spikeThresholdPercent.toInt()}%",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.primaryAccent
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OneUiSlider(
+                                value = detectorConfig.spikeThresholdPercent.toFloat(),
+                                onValueChange = {
+                                    val rounded = Math.round(it / 5.0) * 5.0
+                                    viewModel.updateDetectorConfig(detectorConfig.copy(spikeThresholdPercent = rounded))
+                                },
+                                valueRange = 20.0f..200.0f
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            OneUiInsetDivider()
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Duplicate Charge Time Window",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = OneUiTheme.colors.textPrimary
+                                )
+                                Text(
+                                    text = "${detectorConfig.duplicateExactWindowMinutes} Mins",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.primaryAccent
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OneUiSlider(
+                                value = detectorConfig.duplicateExactWindowMinutes.toFloat(),
+                                onValueChange = {
+                                    viewModel.updateDetectorConfig(detectorConfig.copy(duplicateExactWindowMinutes = it.toInt()))
+                                },
+                                valueRange = 1.0f..60.0f
+                            )
+                        }
+                    }
+
+                    // Card 4: Recurrence Tolerances
+                    item {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            Text(
+                                text = "RECURRENT PAYMENT PATTERNS",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = OneUiTheme.colors.textMuted
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Amount Variation Tolerance",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = OneUiTheme.colors.textPrimary
+                                )
+                                Text(
+                                    text = "±${detectorConfig.recurrenceAmountVariationPercent.toInt()}%",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.primaryAccent
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OneUiSlider(
+                                value = detectorConfig.recurrenceAmountVariationPercent.toFloat(),
+                                onValueChange = {
+                                    val rounded = Math.round(it / 2.0) * 2.0
+                                    viewModel.updateDetectorConfig(detectorConfig.copy(recurrenceAmountVariationPercent = rounded))
+                                },
+                                valueRange = 0.0f..30.0f
+                            )
+                        }
+                    }
+
+                    // Card 5: Manual Trigger Button
+                    item {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Reconcile Insights",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = OneUiTheme.colors.textPrimary
+                                    )
+                                    Text(
+                                        text = "Immediately scan your ledger for anomalies, duplicates & subscriptions",
+                                        fontSize = 12.sp,
+                                        color = OneUiTheme.colors.textSecondary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Button(
+                                    onClick = { viewModel.runAnalysisNow() },
+                                    shape = CircleShape,
+                                    colors = ButtonDefaults.buttonColors(containerColor = OneUiTheme.colors.primaryAccent)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Run Now", color = Color.White, fontSize = 13.sp)
+                                }
+                            }
                         }
                     }
                 }

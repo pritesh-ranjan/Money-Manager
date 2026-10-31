@@ -42,6 +42,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppLockManager.init(this)
         com.moneymanager.app.ui.theme.ThemePreferenceManager.init(this)
+        com.moneymanager.app.domain.insights.InsightPreferencesManager.init(this)
+        com.moneymanager.app.work.InsightWorkScheduler.schedulePeriodic(this)
+        com.moneymanager.app.work.InsightWorkScheduler.runNow(this)
         // Prevent screen capture and task switcher thumbnail leaks when app lock is active
         if (AppLockManager.isLockConfigured()) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)

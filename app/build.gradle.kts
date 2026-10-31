@@ -23,8 +23,8 @@ android {
     applicationId = "com.moneymanager.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 5
-    versionName = "1.0.4"
+    versionCode = 6
+    versionName = "1.0.5"
   }
 
   signingConfigs {
@@ -84,6 +84,10 @@ kotlin {
   jvmToolchain(17)
 }
 
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
   val composeBom = platform(libs.androidx.compose.bom)
   implementation(composeBom)
@@ -128,4 +132,7 @@ dependencies {
   implementation(libs.androidx.navigation3.ui)
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+
+  // WorkManager (Background Reconciliation)
+  implementation(libs.androidx.work.runtime)
 }

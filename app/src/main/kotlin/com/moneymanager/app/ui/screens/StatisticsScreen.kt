@@ -81,11 +81,13 @@ data class BarDayBucket(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatisticsScreen(
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    onOpenInsights: () -> Unit = {}
 ) {
     val selectedYm by viewModel.selectedYearMonth.collectAsState()
     val allTransactions by viewModel.allTransactionsUnfiltered.collectAsState()
     val categoriesMap by viewModel.categoriesMap.collectAsState()
+    val activeInsights by viewModel.activeInsights.collectAsState()
 
     var activeType by remember { mutableStateOf(TransactionType.EXPENSE) }
     var periodType by remember { mutableStateOf(StatsPeriodType.MONTHLY) }
@@ -366,11 +368,29 @@ fun StatisticsScreen(
                 }
             }
 
-            // 1. Gradient Insight Banner Card (Screenshot 4 "Build healthy digital habits")
+            // 1. Gradient Insight Banner Card
             item(key = "wellbeing_banner_card") {
+                val bannerTitle = if (activeInsights.isNotEmpty()) {
+                    "${activeInsights.size} Financial Insights Detected"
+                } else {
+                    "Financial Anomaly & Subscription Detector"
+                }
+                val bannerSubtitle = if (activeInsights.isNotEmpty()) {
+                    val duplicateCount = activeInsights.count { it.insight.type == com.moneymanager.app.data.local.entity.InsightType.DUPLICATE }
+                    val subCount = activeInsights.count { it.insight.type in setOf(com.moneymanager.app.data.local.entity.InsightType.SUBSCRIPTION, com.moneymanager.app.data.local.entity.InsightType.FORGOTTEN_SUBSCRIPTION, com.moneymanager.app.data.local.entity.InsightType.PRICE_INCREASE) }
+                    val parts = mutableListOf<String>()
+                    if (duplicateCount > 0) parts.add("$duplicateCount duplicate(s)")
+                    if (subCount > 0) parts.add("$subCount subscription(s)")
+                    val detail = if (parts.isNotEmpty()) " (${parts.joinToString(", ")})" else ""
+                    "Review unusual spending, duplicates, and recurring payments$detail."
+                } else {
+                    "Tap to review subscriptions, recurring transfers, and spending baselines."
+                }
+
                 OneUiBannerCard(
-                    title = "Build healthy financial habits",
-                    subtitle = "You'll get category feedback and trends to keep your budget on track."
+                    title = bannerTitle,
+                    subtitle = bannerSubtitle,
+                    onClick = onOpenInsights
                 )
             }
 

@@ -8,7 +8,7 @@
 </p>
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/pritesh-ranjan/Money-Manager/actions)
-[![Latest Release](https://img.shields.io/badge/release-v1.0.4-387AFF?style=for-the-badge&logo=android&logoColor=white)](https://github.com/pritesh-ranjan/Money-Manager/releases)
+[![Latest Release](https://img.shields.io/badge/release-v1.0.5-387AFF?style=for-the-badge&logo=android&logoColor=white)](https://github.com/pritesh-ranjan/Money-Manager/releases)
 [![Platform](https://img.shields.io/badge/platform-Android_8.0%2B_(API_26%2B)-34A853?style=for-the-badge&logo=android&logoColor=white)](#prerequisites)
 [![Privacy](https://img.shields.io/badge/privacy-100%25_Offline_%7C_Zero_Trackers-E02424?style=for-the-badge&logo=shield&logoColor=white)](#-vault-security--privacy)
 [![License](https://img.shields.io/badge/license-MIT-8B5CF6?style=for-the-badge)](#license)

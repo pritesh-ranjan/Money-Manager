@@ -13,6 +13,11 @@ import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InsightEntity
+import com.moneymanager.app.data.local.entity.InsightType
+import com.moneymanager.app.data.local.entity.InsightWithTransactions
+import com.moneymanager.app.data.local.entity.RecurrenceDecision
+import com.moneymanager.app.data.local.entity.RecurrenceFrequency
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
@@ -22,6 +27,9 @@ import com.moneymanager.app.domain.CreditCardCycleSummary
 import com.moneymanager.app.domain.MonthlyMoneyStory
 import com.moneymanager.app.domain.MonthlyMoneyStoryEngine
 import com.moneymanager.app.domain.NetWorthSummary
+import com.moneymanager.app.domain.insights.DetectorConfig
+import com.moneymanager.app.domain.insights.InsightPreferencesManager
+import com.moneymanager.app.work.InsightWorkScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -44,7 +52,7 @@ sealed class UiMessage {
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application, viewModelScope)
-    private val repository = MoneyManagerRepository(db.moneyManagerDao())
+    private val repository = MoneyManagerRepository(db.moneyManagerDao(), db.insightsDao())
 
     // Current selected month for ledger
     private val _selectedYearMonth = MutableStateFlow(YearMonth.now())
@@ -111,6 +119,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             referenceDate = today
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // --- Insights Engine Flows ---
+    val activeInsights: StateFlow<List<InsightWithTransactions>> = repository.activeInsights
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val detectorConfig: StateFlow<DetectorConfig> = InsightPreferencesManager.config
+
+    val monthlySubscriptionsTotal: StateFlow<Double> = activeInsights.map { list ->
+        list.filter {
+            it.insight.type in setOf(
+                InsightType.SUBSCRIPTION,
+                InsightType.FORGOTTEN_SUBSCRIPTION,
+                InsightType.PRICE_INCREASE
+            )
+        }.sumOf { item ->
+            val amt = item.insight.amount ?: 0.0
+            val freq = item.insight.frequency ?: RecurrenceFrequency.MONTHLY
+            when (freq) {
+                RecurrenceFrequency.WEEKLY -> amt * 4.33
+                RecurrenceFrequency.FORTNIGHTLY -> amt * 2.16
+                RecurrenceFrequency.MONTHLY -> amt
+                RecurrenceFrequency.QUARTERLY -> amt / 3.0
+                RecurrenceFrequency.YEARLY -> amt / 12.0
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val monthlyRecurringTransfersTotal: StateFlow<Double> = activeInsights.map { list ->
+        list.filter {
+            it.insight.type == InsightType.RECURRING_TRANSFER
+        }.sumOf { item ->
+            val amt = item.insight.amount ?: 0.0
+            val freq = item.insight.frequency ?: RecurrenceFrequency.MONTHLY
+            when (freq) {
+                RecurrenceFrequency.WEEKLY -> amt * 4.33
+                RecurrenceFrequency.FORTNIGHTLY -> amt * 2.16
+                RecurrenceFrequency.MONTHLY -> amt
+                RecurrenceFrequency.QUARTERLY -> amt / 3.0
+                RecurrenceFrequency.YEARLY -> amt / 12.0
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     // Month & Search filtered transactions
     val transactions: StateFlow<List<TransactionWithDetails>> = combine(
@@ -201,6 +251,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     timestamp = timestamp
                 )
                 repository.saveTransaction(tx, tags)
+                runAnalysisNow()
                 _uiMessage.value = UiMessage.Success("Transaction saved")
             } catch (e: Exception) {
                 _uiMessage.value = UiMessage.Error("Failed to save transaction: ${e.localizedMessage}")
@@ -212,6 +263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 repository.deleteTransaction(uid)
+                runAnalysisNow()
                 _uiMessage.value = UiMessage.Success("Transaction deleted")
             } catch (e: Exception) {
                 _uiMessage.value = UiMessage.Error("Failed to delete transaction: ${e.localizedMessage ?: e.message}")
@@ -364,7 +416,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun restoreDatabaseFromUri(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             val result = repository.restoreDatabase(getApplication(), uri)
+            if (result.success) {
+                runAnalysisNow()
+            }
             _uiMessage.value = if (result.success) UiMessage.Success(result.message) else UiMessage.Error(result.message)
         }
+    }
+
+    // --- Insights Engine User Actions ---
+    fun confirmRecurrence(insight: InsightEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val targetKey = insight.targetKey ?: return@launch
+            repository.saveRecurrenceDecision(targetKey, RecurrenceDecision.CONFIRMED)
+            runAnalysisNow()
+            _uiMessage.value = UiMessage.Success("Confirmed recurrence: ${insight.title}")
+        }
+    }
+
+    fun rejectRecurrence(insight: InsightEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val targetKey = insight.targetKey ?: return@launch
+            repository.saveRecurrenceDecision(targetKey, RecurrenceDecision.REJECTED)
+            runAnalysisNow()
+            _uiMessage.value = UiMessage.Success("Marked not recurring: ${insight.title}")
+        }
+    }
+
+    fun deleteDuplicate(transactionUid: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.deleteTransaction(transactionUid)
+                runAnalysisNow()
+                _uiMessage.value = UiMessage.Success("Duplicate transaction deleted")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to delete duplicate: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    fun runAnalysisNow() {
+        InsightWorkScheduler.runNow(getApplication())
+    }
+
+    fun updateDetectorConfig(config: DetectorConfig) {
+        InsightPreferencesManager.updateConfig(config)
+        runAnalysisNow()
     }
 }

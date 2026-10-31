@@ -1,5 +1,6 @@
 package com.moneymanager.app.data
 
+import com.moneymanager.app.data.local.dao.InsightsDao
 import com.moneymanager.app.data.local.dao.MoneyManagerDao
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
@@ -8,6 +9,9 @@ import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InsightWithTransactions
+import com.moneymanager.app.data.local.entity.RecurrenceDecision
+import com.moneymanager.app.data.local.entity.RecurrenceDecisionEntity
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
@@ -22,6 +26,7 @@ import com.moneymanager.app.domain.NetWorthCalculator
 import com.moneymanager.app.domain.NetWorthSummary
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import com.moneymanager.app.domain.DomainValidator
 import java.io.File
 import java.time.LocalDate
@@ -32,7 +37,10 @@ enum class AccountDeleteOutcome {
     ARCHIVED
 }
 
-class MoneyManagerRepository(private val dao: MoneyManagerDao) {
+class MoneyManagerRepository(
+    private val dao: MoneyManagerDao,
+    private val insightsDao: InsightsDao? = null
+) {
 
     // --- Currencies ---
     val allCurrencies: Flow<List<CurrencyEntity>> = dao.getAllCurrencies()
@@ -298,6 +306,29 @@ class MoneyManagerRepository(private val dao: MoneyManagerDao) {
     }
 
     suspend fun restoreDatabase(context: Context, sourceUri: Uri): BackupRestoreResult {
-        return SqliteBackupManager.restoreFromSqliteFile(context, sourceUri, dao)
+        val result = SqliteBackupManager.restoreFromSqliteFile(context, sourceUri, dao)
+        if (result.success) {
+            insightsDao?.clearAllInsights()
+            insightsDao?.clearInsightTransactionCrossRefs()
+        }
+        return result
+    }
+
+    // --- Insights & Recurrence ---
+    val activeInsights: Flow<List<InsightWithTransactions>> =
+        insightsDao?.observeActiveInsights() ?: flowOf(emptyList())
+
+    suspend fun saveRecurrenceDecision(targetKey: String, decision: RecurrenceDecision) {
+        insightsDao?.saveRecurrenceDecision(
+            RecurrenceDecisionEntity(
+                targetKey = targetKey,
+                decision = decision,
+                decidedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun deleteRecurrenceDecision(targetKey: String) {
+        insightsDao?.deleteRecurrenceDecision(targetKey)
     }
 }

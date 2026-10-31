@@ -5,12 +5,16 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.moneymanager.app.data.local.dao.InsightsDao
 import com.moneymanager.app.data.local.dao.MoneyManagerDao
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InsightEntity
+import com.moneymanager.app.data.local.entity.InsightTransactionCrossRef
+import com.moneymanager.app.data.local.entity.RecurrenceDecisionEntity
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionTagCrossRef
@@ -26,14 +30,18 @@ import java.util.UUID
         CategoryEntity::class,
         TagEntity::class,
         TransactionEntity::class,
-        TransactionTagCrossRef::class
+        TransactionTagCrossRef::class,
+        InsightEntity::class,
+        InsightTransactionCrossRef::class,
+        RecurrenceDecisionEntity::class
     ],
-    version = 1,
-    exportSchema = false
+    version = 2,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun moneyManagerDao(): MoneyManagerDao
+    abstract fun insightsDao(): InsightsDao
 
     companion object {
         @Volatile
@@ -46,6 +54,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "money_manager.db"
                 )
+                    .addMigrations(Migrations.MIGRATION_1_2)
                     .addCallback(DatabaseCallback(scope))
                     .fallbackToDestructiveMigration()
                     .build()

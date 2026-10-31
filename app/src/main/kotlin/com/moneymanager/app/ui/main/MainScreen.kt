@@ -53,6 +53,7 @@ fun MainScreen(
 ) {
     var currentTab by remember { mutableStateOf(BottomTab.TRANSACTIONS) }
     var showAddTransactionSheet by remember { mutableStateOf(false) }
+    var showInsightsScreen by remember { mutableStateOf(false) }
     var initialSheetType by remember { mutableStateOf(TransactionType.EXPENSE) }
     var editingTransaction by remember { mutableStateOf<TransactionWithDetails?>(null) }
 
@@ -210,7 +211,8 @@ fun MainScreen(
                     )
 
                     BottomTab.STATS -> StatisticsScreen(
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        onOpenInsights = { showInsightsScreen = true }
                     )
 
                     BottomTab.ACCOUNTS -> AccountsScreen(
@@ -237,6 +239,18 @@ fun MainScreen(
             onDismiss = {
                 showAddTransactionSheet = false
                 editingTransaction = null
+            }
+        )
+    }
+
+    if (showInsightsScreen) {
+        com.moneymanager.app.ui.screens.InsightsScreen(
+            viewModel = viewModel,
+            onBack = { showInsightsScreen = false },
+            onEditTransaction = { item ->
+                editingTransaction = item
+                initialSheetType = item.transaction.type
+                showAddTransactionSheet = true
             }
         )
     }
