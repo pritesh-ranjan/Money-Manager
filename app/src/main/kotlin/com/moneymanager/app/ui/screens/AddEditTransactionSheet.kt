@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
@@ -54,6 +55,7 @@ import com.moneymanager.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.UUID
 import kotlin.math.abs
 
 enum class ActiveTransactionField {
@@ -131,6 +133,14 @@ fun AddEditTransactionSheet(
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
+    var showAddCategoryDialog by remember { mutableStateOf(false) }
+    var parentUidForNewCategory by remember { mutableStateOf<String?>(null) }
+    var parentNameForNewCategory by remember { mutableStateOf<String?>(null) }
+
+    var showAddAccountDialog by remember { mutableStateOf(false) }
+    var addAccountDefaultType by remember { mutableStateOf(AccountType.SAVINGS) }
+    var lastCreatedAccount by remember { mutableStateOf<AccountEntity?>(null) }
+
     var activeField by remember {
         mutableStateOf(if (existingTx == null) ActiveTransactionField.AMOUNT else ActiveTransactionField.NONE)
     }
@@ -156,6 +166,7 @@ fun AddEditTransactionSheet(
 
     val currentAccountWithCurr = allAccounts.firstOrNull { it.account.uid == selectedAccountUid }
     val currentCurrency = currentAccountWithCurr?.currency
+        ?: lastCreatedAccount?.let { lca -> if (lca.uid == selectedAccountUid) allCurrencies.firstOrNull { it.uid == lca.currencyUid } else null }
         ?: allCurrencies.firstOrNull { it.isMainCurrency }
         ?: allCurrencies.firstOrNull()
 
@@ -583,7 +594,8 @@ fun AddEditTransactionSheet(
                             }
 
                             if (selectedType != TransactionType.TRANSFER) {
-                                val selectedAccName = allAccounts.firstOrNull { it.account.uid == selectedAccountUid }?.account?.name ?: ""
+                                val selectedAccName = allAccounts.firstOrNull { it.account.uid == selectedAccountUid }?.account?.name
+                                    ?: if (lastCreatedAccount?.uid == selectedAccountUid) lastCreatedAccount?.name ?: "" else ""
                                 OneUiFormDetailRow(
                                     label = "Account",
                                     onClick = {
@@ -601,7 +613,8 @@ fun AddEditTransactionSheet(
                                     )
                                 }
                             } else {
-                                val fromAccName = allAccounts.firstOrNull { it.account.uid == selectedAccountUid }?.account?.name ?: ""
+                                val fromAccName = allAccounts.firstOrNull { it.account.uid == selectedAccountUid }?.account?.name
+                                    ?: if (lastCreatedAccount?.uid == selectedAccountUid) lastCreatedAccount?.name ?: "" else ""
                                 OneUiFormDetailRow(
                                     label = "From",
                                     onClick = {
@@ -621,7 +634,8 @@ fun AddEditTransactionSheet(
 
                                 OneUiInsetDivider(startIndent = 86.dp)
 
-                                val toAccName = allAccounts.firstOrNull { it.account.uid == selectedToAccountUid }?.account?.name ?: ""
+                                val toAccName = allAccounts.firstOrNull { it.account.uid == selectedToAccountUid }?.account?.name
+                                    ?: if (lastCreatedAccount?.uid == selectedToAccountUid) lastCreatedAccount?.name ?: "" else ""
                                 OneUiFormDetailRow(
                                     label = "To",
                                     onClick = {
@@ -866,6 +880,16 @@ fun AddEditTransactionSheet(
                                             activeField = ActiveTransactionField.NOTE
                                             noteFocusRequester.requestFocus()
                                         }
+                                    },
+                                    onAddNewCategory = {
+                                        parentUidForNewCategory = null
+                                        parentNameForNewCategory = null
+                                        showAddCategoryDialog = true
+                                    },
+                                    onAddNewSubcategory = { parentUid, parentName ->
+                                        parentUidForNewCategory = parentUid
+                                        parentNameForNewCategory = parentName
+                                        showAddCategoryDialog = true
                                     }
                                 )
                             }
@@ -888,6 +912,10 @@ fun AddEditTransactionSheet(
                                             activeField = ActiveTransactionField.NOTE
                                             noteFocusRequester.requestFocus()
                                         }
+                                    },
+                                    onAddNewAccount = { defaultType ->
+                                        addAccountDefaultType = defaultType
+                                        showAddAccountDialog = true
                                     }
                                 )
                             }
@@ -904,6 +932,10 @@ fun AddEditTransactionSheet(
                                         selectedToAccountUid = uid
                                         activeField = ActiveTransactionField.NOTE
                                         noteFocusRequester.requestFocus()
+                                    },
+                                    onAddNewAccount = { defaultType ->
+                                        addAccountDefaultType = defaultType
+                                        showAddAccountDialog = true
                                     }
                                 )
                             }
@@ -952,6 +984,73 @@ fun AddEditTransactionSheet(
                 }
             }
         }
+    }
+
+    if (showAddCategoryDialog) {
+        val currentCatType = if (selectedType == TransactionType.INCOME) CategoryType.INCOME else CategoryType.EXPENSE
+        val allCatsList = if (currentCatType == CategoryType.INCOME) incomeCategories else expenseCategories
+        val flatCats = remember(allCatsList) {
+            allCatsList.flatMap { listOf(it.category) + it.subcategories }
+        }
+
+        OneUiAddCategoryDialog(
+            parentUid = parentUidForNewCategory,
+            parentName = parentNameForNewCategory,
+            categoryType = currentCatType,
+            existingCategories = flatCats,
+            onDismiss = { showAddCategoryDialog = false },
+            onSave = { newCat ->
+                viewModel.saveCategory(newCat)
+                selectedCategoryUid = newCat.uid
+                if (newCat.parentUid != null) {
+                    val parent = categoriesMap[newCat.parentUid]
+                    val pName = parent?.name ?: parentNameForNewCategory ?: ""
+                    selectedCategoryName = if (pName.isNotEmpty()) "$pName / ${newCat.name}" else newCat.name
+                } else {
+                    selectedCategoryName = newCat.name
+                }
+                selectedCategoryIcon = newCat.icon
+
+                if (selectedAccountUid.isBlank()) {
+                    activeField = ActiveTransactionField.ACCOUNT
+                } else {
+                    activeField = ActiveTransactionField.NOTE
+                    noteFocusRequester.requestFocus()
+                }
+                showAddCategoryDialog = false
+            }
+        )
+    }
+
+    if (showAddAccountDialog) {
+        OneUiAddEditAccountDialog(
+            existingAccount = null,
+            defaultAccountType = addAccountDefaultType,
+            currencies = allCurrencies,
+            existingAccounts = allAccounts.map { it.account },
+            onDismiss = { showAddAccountDialog = false },
+            onSave = { newAccount ->
+                viewModel.saveAccount(newAccount)
+                lastCreatedAccount = newAccount
+
+                if (activeField == ActiveTransactionField.TO_ACCOUNT) {
+                    selectedToAccountUid = newAccount.uid
+                    activeField = ActiveTransactionField.NOTE
+                    noteFocusRequester.requestFocus()
+                } else {
+                    selectedAccountUid = newAccount.uid
+                    if (selectedType == TransactionType.TRANSFER && selectedToAccountUid.isBlank()) {
+                        activeField = ActiveTransactionField.TO_ACCOUNT
+                    } else if ((selectedType == TransactionType.EXPENSE || selectedType == TransactionType.INCOME) && selectedCategoryUid == null) {
+                        activeField = ActiveTransactionField.CATEGORY
+                    } else {
+                        activeField = ActiveTransactionField.NOTE
+                        noteFocusRequester.requestFocus()
+                    }
+                }
+                showAddAccountDialog = false
+            }
+        )
     }
 
     if (showAddTagDialog) {
@@ -1042,7 +1141,9 @@ private fun OneUiCategorySplitPickerPanel(
     selectedUid: String?,
     typeColor: Color,
     onClose: () -> Unit,
-    onSelect: (uid: String, name: String, icon: String) -> Unit
+    onSelect: (uid: String, name: String, icon: String) -> Unit,
+    onAddNewCategory: () -> Unit,
+    onAddNewSubcategory: (parentUid: String, parentName: String) -> Unit
 ) {
     var selectedParentUid by remember(categories, selectedUid) {
         val initialParent = categories.firstOrNull { parent ->
@@ -1104,13 +1205,14 @@ private fun OneUiCategorySplitPickerPanel(
                                     if (isSelected) OneUiTheme.colors.surfaceElevated else Color.Transparent
                                 )
                                 .clickable {
-                                    selectedParentUid = parentWithSubs.category.uid
-                                    if (parentWithSubs.subcategories.isEmpty()) {
+                                    if (selectedParentUid == parentWithSubs.category.uid && parentWithSubs.subcategories.isEmpty()) {
                                         onSelect(
                                             parentWithSubs.category.uid,
                                             parentWithSubs.category.name,
                                             parentWithSubs.category.icon
                                         )
+                                    } else {
+                                        selectedParentUid = parentWithSubs.category.uid
                                     }
                                 }
                                 .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -1139,6 +1241,32 @@ private fun OneUiCategorySplitPickerPanel(
                             }
                         }
                         OneUiInsetDivider(startIndent = 42.dp)
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAddNewCategory() }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "New category",
+                                tint = typeColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "New category",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = typeColor,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                            )
+                        }
                     }
                 }
 
@@ -1229,12 +1357,60 @@ private fun OneUiCategorySplitPickerPanel(
                             }
                             OneUiInsetDivider(startIndent = 46.dp)
                         }
+
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onAddNewSubcategory(
+                                            currentParent.category.uid,
+                                            currentParent.category.name
+                                        )
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = "New subcategory",
+                                    tint = typeColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "New subcategory",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        color = typeColor,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp
+                                    )
+                                )
+                            }
+                        }
+                    } else {
+                        item {
+                            Text(
+                                text = "Select or add a category",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textMuted,
+                                    fontSize = 13.sp
+                                ),
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private data class AccountGroupDef(
+    val name: String,
+    val defaultType: AccountType,
+    val accounts: List<AccountWithCurrency>
+)
 
 @Composable
 private fun OneUiAccountSplitPickerPanel(
@@ -1243,27 +1419,29 @@ private fun OneUiAccountSplitPickerPanel(
     selectedUid: String,
     typeColor: Color,
     onClose: () -> Unit,
-    onSelect: (uid: String) -> Unit
+    onSelect: (uid: String) -> Unit,
+    onAddNewAccount: (defaultType: AccountType) -> Unit
 ) {
     val groups = remember(accounts) {
         listOf(
-            "Cards" to accounts.filter { it.account.accountType == AccountType.CREDIT_CARD },
-            "Cash" to accounts.filter { it.account.accountType == AccountType.CASH },
-            "Accounts" to accounts.filter { it.account.accountType in listOf(AccountType.SAVINGS, AccountType.UPI_DEBIT) },
-            "Investments" to accounts.filter { it.account.accountType in listOf(AccountType.INVESTMENT, AccountType.MUTUAL_FUNDS, AccountType.EQUITY) },
-            "Wallets" to accounts.filter { it.account.accountType == AccountType.WALLET },
-            "Other" to accounts.filter { it.account.accountType in listOf(AccountType.LOAN, AccountType.OTHER) }
-        ).filter { it.second.isNotEmpty() }
+            AccountGroupDef("Cards", AccountType.CREDIT_CARD, accounts.filter { it.account.accountType == AccountType.CREDIT_CARD }),
+            AccountGroupDef("Cash", AccountType.CASH, accounts.filter { it.account.accountType == AccountType.CASH }),
+            AccountGroupDef("Accounts", AccountType.SAVINGS, accounts.filter { it.account.accountType in listOf(AccountType.SAVINGS, AccountType.UPI_DEBIT) }),
+            AccountGroupDef("Investments", AccountType.MUTUAL_FUNDS, accounts.filter { it.account.accountType in listOf(AccountType.INVESTMENT, AccountType.MUTUAL_FUNDS, AccountType.EQUITY) }),
+            AccountGroupDef("Wallets", AccountType.WALLET, accounts.filter { it.account.accountType == AccountType.WALLET }),
+            AccountGroupDef("Other", AccountType.OTHER, accounts.filter { it.account.accountType in listOf(AccountType.LOAN, AccountType.OTHER) })
+        )
     }
 
     var selectedGroupName by remember(groups, selectedUid) {
-        val initialGroup = groups.firstOrNull { (_, accList) ->
-            accList.any { it.account.uid == selectedUid }
-        } ?: groups.firstOrNull()
-        mutableStateOf(initialGroup?.first)
+        val initialGroup = groups.firstOrNull { it.accounts.any { acc -> acc.account.uid == selectedUid } }
+            ?: groups.firstOrNull { it.accounts.isNotEmpty() }
+            ?: groups.firstOrNull()
+        mutableStateOf(initialGroup?.name)
     }
 
-    val currentAccountsInGroup = groups.firstOrNull { it.first == selectedGroupName }?.second ?: emptyList()
+    val currentGroup = groups.firstOrNull { it.name == selectedGroupName }
+    val currentAccountsInGroup = currentGroup?.accounts ?: emptyList()
 
     Surface(
         modifier = Modifier
@@ -1304,9 +1482,9 @@ private fun OneUiAccountSplitPickerPanel(
                         .weight(0.44f)
                         .fillMaxHeight()
                 ) {
-                    items(groups, key = { it.first }) { (groupName, accList) ->
-                        val isSelected = groupName == selectedGroupName
-                        val containsActiveAccount = accList.any { it.account.uid == selectedUid }
+                    items(groups, key = { it.name }) { group ->
+                        val isSelected = group.name == selectedGroupName
+                        val containsActiveAccount = group.accounts.any { it.account.uid == selectedUid }
 
                         Row(
                             modifier = Modifier
@@ -1314,12 +1492,12 @@ private fun OneUiAccountSplitPickerPanel(
                                 .background(
                                     if (isSelected) OneUiTheme.colors.surfaceElevated else Color.Transparent
                                 )
-                                .clickable { selectedGroupName = groupName }
+                                .clickable { selectedGroupName = group.name }
                                 .padding(horizontal = 16.dp, vertical = 13.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = groupName,
+                                text = group.name,
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     color = if (isSelected || containsActiveAccount) typeColor else OneUiTheme.colors.textPrimary,
                                     fontWeight = if (isSelected || containsActiveAccount) FontWeight.Bold else FontWeight.Normal,
@@ -1338,6 +1516,32 @@ private fun OneUiAccountSplitPickerPanel(
                         }
                         OneUiInsetDivider(startIndent = 16.dp)
                     }
+
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAddNewAccount(AccountType.SAVINGS) }
+                                .padding(horizontal = 16.dp, vertical = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "New account",
+                                tint = typeColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "New account",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = typeColor,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                            )
+                        }
+                    }
                 }
 
                 VerticalDivider(color = OneUiTheme.colors.divider, thickness = 0.5.dp)
@@ -1347,41 +1551,82 @@ private fun OneUiAccountSplitPickerPanel(
                         .weight(0.56f)
                         .fillMaxHeight()
                 ) {
-                    items(currentAccountsInGroup, key = { it.account.uid }) { accWithCurr ->
-                        val isAccSelected = accWithCurr.account.uid == selectedUid
+                    if (currentAccountsInGroup.isEmpty()) {
+                        item {
+                            Text(
+                                text = "No accounts in ${selectedGroupName ?: "group"}",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textMuted,
+                                    fontSize = 13.sp
+                                ),
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                            )
+                            OneUiInsetDivider(startIndent = 16.dp)
+                        }
+                    } else {
+                        items(currentAccountsInGroup, key = { it.account.uid }) { accWithCurr ->
+                            val isAccSelected = accWithCurr.account.uid == selectedUid
 
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(accWithCurr.account.uid) }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OneUiRadioButton(
+                                    selected = isAccSelected,
+                                    onClick = { onSelect(accWithCurr.account.uid) }
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = accWithCurr.account.name,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        color = if (isAccSelected) typeColor else OneUiTheme.colors.textPrimary,
+                                        fontWeight = if (isAccSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 14.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (accWithCurr.currency.isCustom) {
+                                    Text(
+                                        text = accWithCurr.currency.symbol,
+                                        color = OneUiTheme.colors.textMuted,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                            OneUiInsetDivider(startIndent = 46.dp)
+                        }
+                    }
+
+                    item {
+                        val defType = currentGroup?.defaultType ?: AccountType.SAVINGS
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onSelect(accWithCurr.account.uid) }
+                                .clickable { onAddNewAccount(defType) }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OneUiRadioButton(
-                                selected = isAccSelected,
-                                onClick = { onSelect(accWithCurr.account.uid) }
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "New account",
+                                tint = typeColor,
+                                modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = accWithCurr.account.name,
+                                text = "New account",
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = if (isAccSelected) typeColor else OneUiTheme.colors.textPrimary,
-                                    fontWeight = if (isAccSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = typeColor,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (accWithCurr.currency.isCustom) {
-                                Text(
-                                    text = accWithCurr.currency.symbol,
-                                    color = OneUiTheme.colors.textMuted,
-                                    fontSize = 11.sp
                                 )
-                            }
+                            )
                         }
-                        OneUiInsetDivider(startIndent = 46.dp)
                     }
                 }
             }

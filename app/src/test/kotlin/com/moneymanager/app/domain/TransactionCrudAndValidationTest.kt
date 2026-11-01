@@ -536,4 +536,92 @@ class TransactionCrudAndValidationTest {
             assertTrue(e.message!!.contains("not found or already deleted", ignoreCase = true))
         }
     }
+
+    @Test
+    fun testCreateNewCategoryAndSubcategory_andUseInTransaction() = runTest {
+        // 1. Create a brand new parent category dynamically
+        val newParentCat = CategoryEntity(
+            uid = "cat_entertainment_new",
+            name = "Entertainment",
+            type = CategoryType.EXPENSE,
+            icon = "🎬"
+        )
+        repository.saveCategory(newParentCat)
+
+        // 2. Create a brand new subcategory under the parent category
+        val newSubCat = CategoryEntity(
+            uid = "cat_movies_sub",
+            name = "Cinema",
+            type = CategoryType.EXPENSE,
+            parentUid = newParentCat.uid,
+            icon = "🍿"
+        )
+        repository.saveCategory(newSubCat)
+
+        // 3. Save a transaction referencing the newly created subcategory
+        val tx = TransactionEntity(
+            uid = "tx_movie_night",
+            type = TransactionType.EXPENSE,
+            accountAmount = 750.0,
+            baseAmount = 750.0,
+            currencyUid = inr.uid,
+            accountUid = savingsAccount.uid,
+            categoryUid = newSubCat.uid,
+            note = "IMAX Tickets"
+        )
+        repository.saveTransaction(tx)
+
+        val retrievedTx = repository.allTransactions.first().firstOrNull { it.transaction.uid == "tx_movie_night" }
+        assertNotNull(retrievedTx)
+        assertEquals("Cinema", retrievedTx?.category?.name)
+        assertEquals(newParentCat.uid, retrievedTx?.category?.parentUid)
+    }
+
+    @Test
+    fun testCreateNewAccountDynamically_andUseInTransactionAndTransfer() = runTest {
+        // 1. Create a new digital wallet account dynamically
+        val newWallet = AccountEntity(
+            uid = "acc_amazon_pay",
+            name = "Amazon Pay Balance",
+            accountType = AccountType.WALLET,
+            currencyUid = inr.uid,
+            openingBalance = 500.0
+        )
+        repository.saveAccount(newWallet)
+
+        // 2. Make an expense on the new account
+        val expenseTx = TransactionEntity(
+            uid = "tx_amazon_purchase",
+            type = TransactionType.EXPENSE,
+            accountAmount = 250.0,
+            baseAmount = 250.0,
+            currencyUid = inr.uid,
+            accountUid = newWallet.uid,
+            note = "Book purchase"
+        )
+        repository.saveTransaction(expenseTx)
+
+        // 3. Transfer from savings to the new account
+        val transferTx = TransactionEntity(
+            uid = "tx_topup_wallet",
+            type = TransactionType.TRANSFER,
+            accountAmount = 1000.0,
+            baseAmount = 1000.0,
+            currencyUid = inr.uid,
+            accountUid = savingsAccount.uid,
+            toAccountUid = newWallet.uid,
+            note = "Wallet Topup"
+        )
+        repository.saveTransaction(transferTx)
+
+        val allTx = repository.allTransactions.first()
+        val foundExpense = allTx.firstOrNull { it.transaction.uid == "tx_amazon_purchase" }
+        assertNotNull(foundExpense)
+        assertEquals("Amazon Pay Balance", foundExpense?.account?.name)
+
+        val foundTransfer = allTx.firstOrNull { it.transaction.uid == "tx_topup_wallet" }
+        assertNotNull(foundTransfer)
+        assertEquals("HDFC Savings", foundTransfer?.account?.name)
+        assertEquals("Amazon Pay Balance", foundTransfer?.toAccount?.name)
+    }
 }

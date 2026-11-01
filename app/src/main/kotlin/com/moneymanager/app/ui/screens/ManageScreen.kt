@@ -1137,59 +1137,23 @@ fun ManageScreen(
 
     // Add Category Dialog
     if (showAddCategoryDialog) {
-        var categoryName by remember { mutableStateOf("") }
-        var categoryIcon by remember { mutableStateOf(if (parentUidForNewSubcategory == null) "📁" else "🏷️") }
-
-        val tfColors = TextFieldDefaults.colors(
-            focusedTextColor = OneUiTheme.colors.textPrimary,
-            unfocusedTextColor = OneUiTheme.colors.textPrimary,
-            focusedContainerColor = OneUiTheme.colors.surfaceElevated,
-            unfocusedContainerColor = OneUiTheme.colors.surfaceElevated,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent
-        )
-
-        OneUiBottomDialog(
-            onDismissRequest = { showAddCategoryDialog = false },
-            title = if (parentUidForNewSubcategory == null) "New Category" else "New Subcategory",
-            confirmButtonText = "Save",
-            onConfirm = {
-                if (categoryName.isNotBlank()) {
-                    viewModel.saveCategory(
-                        CategoryEntity(
-                            uid = UUID.randomUUID().toString(),
-                            name = categoryName.trim(),
-                            type = selectedCategoryTab,
-                            parentUid = parentUidForNewSubcategory,
-                            icon = categoryIcon.trim().ifEmpty { "📁" }
-                        )
-                    )
-                    showAddCategoryDialog = false
-                }
-            }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextField(
-                    value = categoryName,
-                    onValueChange = { categoryName = it },
-                    label = { Text("Category Name") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
-                    colors = tfColors,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                TextField(
-                    value = categoryIcon,
-                    onValueChange = { categoryIcon = it },
-                    label = { Text("Emoji / Icon") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
-                    colors = tfColors,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+        val currentCats = if (selectedCategoryTab == CategoryType.EXPENSE) expenseCategories else incomeCategories
+        val flatCats = remember(currentCats) {
+            currentCats.flatMap { listOf(it.category) + it.subcategories }
         }
+        val parentCat = parentUidForNewSubcategory?.let { pUid -> currentCats.firstOrNull { it.category.uid == pUid }?.category }
+
+        OneUiAddCategoryDialog(
+            parentUid = parentUidForNewSubcategory,
+            parentName = parentCat?.name,
+            categoryType = selectedCategoryTab,
+            existingCategories = flatCats,
+            onDismiss = { showAddCategoryDialog = false },
+            onSave = { newCategory ->
+                viewModel.saveCategory(newCategory)
+                showAddCategoryDialog = false
+            }
+        )
     }
 
     // Add Currency Dialog
@@ -1311,3 +1275,105 @@ fun ManageScreen(
         }
     }
 }
+
+@Composable
+fun OneUiAddCategoryDialog(
+    parentUid: String? = null,
+    parentName: String? = null,
+    categoryType: CategoryType = CategoryType.EXPENSE,
+    existingCategories: List<CategoryEntity> = emptyList(),
+    onDismiss: () -> Unit,
+    onSave: (CategoryEntity) -> Unit
+) {
+    var categoryName by remember { mutableStateOf("") }
+    var categoryIcon by remember { mutableStateOf(if (parentUid == null) "📁" else "🏷️") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    val tfColors = TextFieldDefaults.colors(
+        focusedTextColor = OneUiTheme.colors.textPrimary,
+        unfocusedTextColor = OneUiTheme.colors.textPrimary,
+        focusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        unfocusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent
+    )
+
+    val dialogTitle = if (parentUid == null) {
+        "New Category"
+    } else if (!parentName.isNullOrBlank()) {
+        "New Subcategory in $parentName"
+    } else {
+        "New Subcategory"
+    }
+
+    OneUiBottomDialog(
+        onDismissRequest = onDismiss,
+        title = dialogTitle,
+        confirmButtonText = "Save",
+        onConfirm = {
+            val cleanName = categoryName.trim()
+            if (cleanName.isBlank()) {
+                validationError = "Category name cannot be empty"
+                return@OneUiBottomDialog
+            }
+
+            val duplicate = existingCategories.any {
+                !it.isDeleted &&
+                it.type == categoryType &&
+                it.parentUid == parentUid &&
+                it.name.trim().equals(cleanName, ignoreCase = true)
+            }
+            if (duplicate) {
+                validationError = "A category with name '$cleanName' already exists here"
+                return@OneUiBottomDialog
+            }
+
+            onSave(
+                CategoryEntity(
+                    uid = UUID.randomUUID().toString(),
+                    name = cleanName,
+                    type = categoryType,
+                    parentUid = parentUid,
+                    icon = categoryIcon.trim().ifEmpty { if (parentUid == null) "📁" else "🏷️" }
+                )
+            )
+        }
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (validationError != null) {
+                Text(
+                    text = validationError!!,
+                    color = OneUiTheme.colors.expense,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                )
+            }
+
+            TextField(
+                value = categoryName,
+                onValueChange = {
+                    categoryName = it
+                    validationError = null
+                },
+                label = { Text(if (parentUid == null) "Category Name" else "Subcategory Name") },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = tfColors,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            TextField(
+                value = categoryIcon,
+                onValueChange = {
+                    categoryIcon = it
+                    validationError = null
+                },
+                label = { Text("Emoji / Icon") },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = tfColors,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
