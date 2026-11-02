@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Notifications
@@ -56,7 +57,8 @@ enum class SettingsSubScreen {
     SECURITY,
     TAGS,
     BACKUP,
-    INSIGHTS_CONFIG
+    INSIGHTS_CONFIG,
+    GMAIL_IMPORTER
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -69,6 +71,7 @@ fun ManageScreen(
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val allTags by viewModel.allTags.collectAsState()
     val currentThemeMode by ThemePreferenceManager.themeMode.collectAsState()
+    val gmailSyncState by viewModel.gmailSyncState.collectAsState()
 
     var currentSubScreen by remember { mutableStateOf(SettingsSubScreen.ROOT) }
     var selectedCategoryTab by remember { mutableStateOf(CategoryType.EXPENSE) }
@@ -281,7 +284,28 @@ fun ManageScreen(
                         }
                     }
 
-                    // 4. Group 3: Database Backup & Restore (Green Badge at bottom of Screenshot 5)
+                    // 4. Group 3: Gmail Statement Importer (Zero-Cloud Automation)
+                    item(key = "group_gmail_importer") {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
+                        ) {
+                            val isConnected = !gmailSyncState?.accountEmail.isNullOrBlank()
+                            OneUiListRow(
+                                title = "Gmail statement importer",
+                                subtitle = if (isConnected) "Connected: ${gmailSyncState?.accountEmail}" else "Auto-import PDF statements on-device",
+                                subtitleColor = if (isConnected) OneUiTheme.colors.income else OneUiTheme.colors.textSecondary,
+                                leadingContent = {
+                                    OneUiIconBadge(
+                                        icon = Icons.Default.Email,
+                                        backgroundColor = OneUiTheme.colors.badgeOrange
+                                    )
+                                },
+                                onClick = { currentSubScreen = SettingsSubScreen.GMAIL_IMPORTER }
+                            )
+                        }
+                    }
+
+                    // 5. Group 4: Database Backup & Restore (Green Badge at bottom of Screenshot 5)
                     item(key = "group_backup_storage") {
                         OneUiCard(
                             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
@@ -1091,6 +1115,13 @@ fun ManageScreen(
                     }
                 }
             }
+        }
+
+        SettingsSubScreen.GMAIL_IMPORTER -> {
+            com.moneymanager.app.ui.screens.gmail.GmailImporterScreen(
+                viewModel = viewModel,
+                onBack = { currentSubScreen = SettingsSubScreen.ROOT }
+            )
         }
     }
 

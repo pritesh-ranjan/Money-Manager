@@ -5,10 +5,12 @@ import android.app.TimePickerDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,11 +18,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Cancel
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -136,6 +137,7 @@ fun AddEditTransactionSheet(
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     var parentUidForNewCategory by remember { mutableStateOf<String?>(null) }
     var parentNameForNewCategory by remember { mutableStateOf<String?>(null) }
+    var categoryDrillDownParent by remember { mutableStateOf<CategoryWithSubcategories?>(null) }
 
     var showAddAccountDialog by remember { mutableStateOf(false) }
     var addAccountDefaultType by remember { mutableStateOf(AccountType.SAVINGS) }
@@ -270,9 +272,12 @@ fun AddEditTransactionSheet(
 
     Dialog(
         onDismissRequest = {
-            if (activeField in listOf(ActiveTransactionField.CATEGORY, ActiveTransactionField.ACCOUNT, ActiveTransactionField.TO_ACCOUNT, ActiveTransactionField.NOTE)) {
+            if (activeField == ActiveTransactionField.CATEGORY && categoryDrillDownParent != null) {
+                categoryDrillDownParent = null
+            } else if (activeField in listOf(ActiveTransactionField.CATEGORY, ActiveTransactionField.ACCOUNT, ActiveTransactionField.TO_ACCOUNT, ActiveTransactionField.NOTE)) {
                 focusManager.clearFocus()
                 keyboardController?.hide()
+                categoryDrillDownParent = null
                 activeField = ActiveTransactionField.NONE
             } else {
                 onDismiss()
@@ -284,9 +289,12 @@ fun AddEditTransactionSheet(
         )
     ) {
         BackHandler {
-            if (activeField in listOf(ActiveTransactionField.CATEGORY, ActiveTransactionField.ACCOUNT, ActiveTransactionField.TO_ACCOUNT, ActiveTransactionField.NOTE)) {
+            if (activeField == ActiveTransactionField.CATEGORY && categoryDrillDownParent != null) {
+                categoryDrillDownParent = null
+            } else if (activeField in listOf(ActiveTransactionField.CATEGORY, ActiveTransactionField.ACCOUNT, ActiveTransactionField.TO_ACCOUNT, ActiveTransactionField.NOTE)) {
                 focusManager.clearFocus()
                 keyboardController?.hide()
+                categoryDrillDownParent = null
                 activeField = ActiveTransactionField.NONE
             } else {
                 onDismiss()
@@ -302,11 +310,12 @@ fun AddEditTransactionSheet(
                 .imePadding(),
             color = OneUiTheme.colors.background
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(OneUiTheme.colors.background)
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(OneUiTheme.colors.background)
+                ) {
                 // One UI Sub-Screen Top Bar (Screenshot 2 "< Title")
                 OneUiSubScreenTopBar(
                     title = if (existingTx != null) "Edit transaction" else "New transaction",
@@ -344,6 +353,7 @@ fun AddEditTransactionSheet(
                             val previousType = selectedType
                             selectedType = type
                             validationError = null
+                            categoryDrillDownParent = null
                             if (type == TransactionType.TRANSFER || type == TransactionType.ADJUSTMENT) {
                                 selectedCategoryUid = null
                                 selectedCategoryName = ""
@@ -850,101 +860,6 @@ fun AddEditTransactionSheet(
                     }
                 }
 
-                // Docked Bottom Split Picker Panels
-                AnimatedVisibility(
-                    visible = activeField in listOf(
-                        ActiveTransactionField.CATEGORY,
-                        ActiveTransactionField.ACCOUNT,
-                        ActiveTransactionField.TO_ACCOUNT
-                    ),
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-                ) {
-                    key(selectedType) {
-                        when (activeField) {
-                            ActiveTransactionField.CATEGORY -> {
-                                val categoriesList = if (selectedType == TransactionType.INCOME) incomeCategories else expenseCategories
-                                OneUiCategorySplitPickerPanel(
-                                    categories = categoriesList,
-                                    selectedUid = selectedCategoryUid,
-                                    typeColor = typeColor,
-                                    onClose = { activeField = ActiveTransactionField.NONE },
-                                    onSelect = { uid, name, icon ->
-                                        selectedCategoryUid = uid
-                                        selectedCategoryName = name
-                                        selectedCategoryIcon = icon
-
-                                        if (selectedAccountUid.isBlank()) {
-                                            activeField = ActiveTransactionField.ACCOUNT
-                                        } else {
-                                            activeField = ActiveTransactionField.NOTE
-                                            noteFocusRequester.requestFocus()
-                                        }
-                                    },
-                                    onAddNewCategory = {
-                                        parentUidForNewCategory = null
-                                        parentNameForNewCategory = null
-                                        showAddCategoryDialog = true
-                                    },
-                                    onAddNewSubcategory = { parentUid, parentName ->
-                                        parentUidForNewCategory = parentUid
-                                        parentNameForNewCategory = parentName
-                                        showAddCategoryDialog = true
-                                    }
-                                )
-                            }
-
-                            ActiveTransactionField.ACCOUNT -> {
-                                OneUiAccountSplitPickerPanel(
-                                    title = if (selectedType == TransactionType.TRANSFER) "From account" else "Select account",
-                                    accounts = allAccounts,
-                                    selectedUid = selectedAccountUid,
-                                    typeColor = typeColor,
-                                    onClose = { activeField = ActiveTransactionField.NONE },
-                                    onSelect = { uid ->
-                                        selectedAccountUid = uid
-
-                                        if (selectedType == TransactionType.TRANSFER && selectedToAccountUid.isBlank()) {
-                                            activeField = ActiveTransactionField.TO_ACCOUNT
-                                        } else if ((selectedType == TransactionType.EXPENSE || selectedType == TransactionType.INCOME) && selectedCategoryUid == null) {
-                                            activeField = ActiveTransactionField.CATEGORY
-                                        } else {
-                                            activeField = ActiveTransactionField.NOTE
-                                            noteFocusRequester.requestFocus()
-                                        }
-                                    },
-                                    onAddNewAccount = { defaultType ->
-                                        addAccountDefaultType = defaultType
-                                        showAddAccountDialog = true
-                                    }
-                                )
-                            }
-
-                            ActiveTransactionField.TO_ACCOUNT -> {
-                                val destinationAccounts = allAccounts.filter { it.account.uid != selectedAccountUid }
-                                OneUiAccountSplitPickerPanel(
-                                    title = "To account",
-                                    accounts = destinationAccounts,
-                                    selectedUid = selectedToAccountUid,
-                                    typeColor = typeColor,
-                                    onClose = { activeField = ActiveTransactionField.NONE },
-                                    onSelect = { uid ->
-                                        selectedToAccountUid = uid
-                                        activeField = ActiveTransactionField.NOTE
-                                        noteFocusRequester.requestFocus()
-                                    },
-                                    onAddNewAccount = { defaultType ->
-                                        addAccountDefaultType = defaultType
-                                        showAddAccountDialog = true
-                                    }
-                                )
-                            }
-
-                            else -> Unit
-                        }
-                    }
-                }
-
                 // Docked Note Suggestions Panel (Directly above keyboard via imePadding)
                 AnimatedVisibility(
                     visible = activeField == ActiveTransactionField.NOTE && noteSuggestions.isNotEmpty(),
@@ -983,8 +898,149 @@ fun AddEditTransactionSheet(
                     )
                 }
             }
+
+            // Overlay Picker Panel with Backdrop Scrim (Screenshots 1, 2, 3)
+            AnimatedVisibility(
+                visible = activeField in listOf(
+                    ActiveTransactionField.CATEGORY,
+                    ActiveTransactionField.ACCOUNT,
+                    ActiveTransactionField.TO_ACCOUNT
+                ),
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                if (activeField == ActiveTransactionField.CATEGORY && categoryDrillDownParent != null) {
+                                    categoryDrillDownParent = null
+                                } else {
+                                    categoryDrillDownParent = null
+                                    activeField = ActiveTransactionField.NONE
+                                }
+                            }
+                        ),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.85f)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { /* prevent click-through */ }
+                            ),
+                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                        color = OneUiTheme.colors.surface,
+                        shadowElevation = 16.dp
+                    ) {
+                        key(selectedType) {
+                            when (activeField) {
+                                ActiveTransactionField.CATEGORY -> {
+                                    val categoriesList = if (selectedType == TransactionType.INCOME) incomeCategories else expenseCategories
+                                    OneUiCategorySelectionSheet(
+                                        categories = categoriesList,
+                                        selectedUid = selectedCategoryUid,
+                                        selectedType = selectedType,
+                                        allTransactions = allTransactions,
+                                        typeColor = typeColor,
+                                        drillDownParent = categoryDrillDownParent,
+                                        onDrillDown = { categoryDrillDownParent = it },
+                                        onBackFromDrillDown = { categoryDrillDownParent = null },
+                                        onClose = {
+                                            categoryDrillDownParent = null
+                                            activeField = ActiveTransactionField.NONE
+                                        },
+                                        onSelect = { uid, name, icon ->
+                                            selectedCategoryUid = uid
+                                            selectedCategoryName = name
+                                            selectedCategoryIcon = icon
+                                            categoryDrillDownParent = null
+
+                                            if (selectedAccountUid.isBlank()) {
+                                                activeField = ActiveTransactionField.ACCOUNT
+                                            } else {
+                                                activeField = ActiveTransactionField.NOTE
+                                                noteFocusRequester.requestFocus()
+                                            }
+                                        },
+                                        onAddNewCategory = {
+                                            parentUidForNewCategory = null
+                                            parentNameForNewCategory = null
+                                            showAddCategoryDialog = true
+                                        },
+                                        onAddNewSubcategory = { parentUid, parentName ->
+                                            parentUidForNewCategory = parentUid
+                                            parentNameForNewCategory = parentName
+                                            showAddCategoryDialog = true
+                                        }
+                                    )
+                                }
+
+                                ActiveTransactionField.ACCOUNT -> {
+                                    OneUiAccountSelectionSheet(
+                                        title = if (selectedType == TransactionType.TRANSFER) "From account" else "Select account",
+                                        accounts = allAccounts,
+                                        selectedUid = selectedAccountUid,
+                                        allTransactions = allTransactions,
+                                        typeColor = typeColor,
+                                        onClose = { activeField = ActiveTransactionField.NONE },
+                                        onSelect = { uid ->
+                                            selectedAccountUid = uid
+
+                                            if (selectedType == TransactionType.TRANSFER && selectedToAccountUid.isBlank()) {
+                                                activeField = ActiveTransactionField.TO_ACCOUNT
+                                            } else if ((selectedType == TransactionType.EXPENSE || selectedType == TransactionType.INCOME) && selectedCategoryUid == null) {
+                                                activeField = ActiveTransactionField.CATEGORY
+                                            } else {
+                                                activeField = ActiveTransactionField.NOTE
+                                                noteFocusRequester.requestFocus()
+                                            }
+                                        },
+                                        onAddNewAccount = { defaultType ->
+                                            addAccountDefaultType = defaultType
+                                            showAddAccountDialog = true
+                                        }
+                                    )
+                                }
+
+                                ActiveTransactionField.TO_ACCOUNT -> {
+                                    val destinationAccounts = allAccounts.filter { it.account.uid != selectedAccountUid }
+                                    OneUiAccountSelectionSheet(
+                                        title = "To account",
+                                        accounts = destinationAccounts,
+                                        selectedUid = selectedToAccountUid,
+                                        allTransactions = allTransactions,
+                                        typeColor = typeColor,
+                                        onClose = { activeField = ActiveTransactionField.NONE },
+                                        onSelect = { uid ->
+                                            selectedToAccountUid = uid
+                                            activeField = ActiveTransactionField.NOTE
+                                            noteFocusRequester.requestFocus()
+                                        },
+                                        onAddNewAccount = { defaultType ->
+                                            addAccountDefaultType = defaultType
+                                            showAddAccountDialog = true
+                                        }
+                                    )
+                                }
+
+                                else -> Unit
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
+}
 
     if (showAddCategoryDialog) {
         val currentCatType = if (selectedType == TransactionType.INCOME) CategoryType.INCOME else CategoryType.EXPENSE
@@ -1136,37 +1192,359 @@ private fun OneUiFormDetailRow(
 }
 
 @Composable
-private fun OneUiCategorySplitPickerPanel(
+private fun OneUiSelectionCircle(
+    selected: Boolean,
+    typeColor: Color,
+    modifier: Modifier = Modifier
+) {
+    if (selected) {
+        Box(
+            modifier = modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(typeColor),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+            )
+        }
+    } else {
+        Box(
+            modifier = modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(OneUiTheme.colors.surfaceElevated.copy(alpha = 0.8f))
+                .border(1.5.dp, OneUiTheme.colors.textMuted.copy(alpha = 0.45f), CircleShape)
+        )
+    }
+}
+
+@Composable
+private fun OneUiCategoryIcon(
+    icon: String,
+    name: String,
+    modifier: Modifier = Modifier,
+    tint: Color = OneUiTheme.colors.textPrimary
+) {
+    val lowerName = name.lowercase(Locale.getDefault())
+    val vectorIcon = when {
+        lowerName.contains("kolkata") || lowerName.contains("city") || lowerName.contains("location") -> Icons.Default.LocationOn
+        lowerName.contains("food") || lowerName.contains("dining") || lowerName.contains("restaurant") -> Icons.Default.Restaurant
+        lowerName.contains("transport") || lowerName.contains("cab") || lowerName.contains("car") || lowerName.contains("fuel") -> Icons.Default.DirectionsCar
+        lowerName.contains("health") || lowerName.contains("fitness") || lowerName.contains("medical") -> Icons.Default.FavoriteBorder
+        lowerName.contains("lifestyle") || lowerName.contains("leisure") || lowerName.contains("entertainment") || lowerName.contains("game") -> Icons.Default.SportsEsports
+        lowerName.contains("shopping") || lowerName.contains("cloth") || lowerName.contains("electronic") -> Icons.Default.ShoppingBag
+        lowerName.contains("grocer") -> Icons.Default.ShoppingBasket
+        lowerName.contains("bill") || lowerName.contains("admin") -> Icons.AutoMirrored.Filled.ReceiptLong
+        lowerName.contains("salary") || lowerName.contains("bonus") -> Icons.Default.AccountBalance
+        lowerName.contains("invest") -> Icons.AutoMirrored.Filled.TrendingUp
+        else -> null
+    }
+
+    if (vectorIcon != null) {
+        Icon(
+            imageVector = vectorIcon,
+            contentDescription = name,
+            tint = tint,
+            modifier = modifier
+        )
+    } else if (icon.isNotBlank() && icon != "📁") {
+        Text(text = icon, fontSize = 20.sp)
+    } else {
+        Icon(
+            imageVector = Icons.Default.Category,
+            contentDescription = name,
+            tint = tint,
+            modifier = modifier
+        )
+    }
+}
+
+@Composable
+private fun OneUiAccountTypeIcon(
+    accountType: AccountType,
+    modifier: Modifier = Modifier,
+    tint: Color = OneUiTheme.colors.textPrimary
+) {
+    val icon = when (accountType) {
+        AccountType.CREDIT_CARD -> Icons.Default.CreditCard
+        AccountType.CASH -> Icons.Default.AccountBalanceWallet
+        AccountType.SAVINGS, AccountType.UPI_DEBIT -> Icons.Default.AccountBalance
+        AccountType.INVESTMENT, AccountType.MUTUAL_FUNDS, AccountType.EQUITY -> Icons.AutoMirrored.Filled.TrendingUp
+        AccountType.WALLET -> Icons.Default.AccountBalanceWallet
+        AccountType.LOAN, AccountType.OTHER -> Icons.Default.Savings
+    }
+    Icon(
+        imageVector = icon,
+        contentDescription = accountType.displayName,
+        tint = tint,
+        modifier = modifier
+    )
+}
+
+private fun getAccountDisplayInfo(account: AccountEntity): Pair<String, String> {
+    val fourDigitsRegex = Regex("^(.*?)[\\s\\-–—\\(]*[•\\*xX]*(\\d{4})\\)?$")
+    val match = fourDigitsRegex.find(account.name.trim())
+    return if (match != null && match.groupValues[1].isNotBlank()) {
+        val cleanName = match.groupValues[1].trim()
+        val digits = match.groupValues[2]
+        Pair(cleanName, "•••• $digits")
+    } else {
+        val subtitle = when (account.accountType) {
+            AccountType.CREDIT_CARD -> "Credit card"
+            AccountType.CASH -> "Cash"
+            AccountType.SAVINGS -> "Bank / Savings"
+            AccountType.UPI_DEBIT -> "UPI / Debit"
+            AccountType.WALLET -> "Wallet"
+            AccountType.INVESTMENT -> "Investment"
+            AccountType.MUTUAL_FUNDS -> "Mutual funds"
+            AccountType.EQUITY -> "Equity"
+            AccountType.LOAN -> "Loan"
+            AccountType.OTHER -> "Other"
+        }
+        Pair(account.name, subtitle)
+    }
+}
+
+private fun getCategorySubtitle(parentWithSubs: CategoryWithSubcategories): String {
+    val subs = parentWithSubs.subcategories
+    if (subs.isEmpty()) return ""
+    return if (subs.size >= 6) {
+        "${subs.size} categories"
+    } else {
+        subs.joinToString(", ") { it.name }
+    }
+}
+
+private data class CategorySearchResult(
+    val uid: String,
+    val displayName: String,
+    val icon: String,
+    val isSubcategory: Boolean,
+    val parentName: String?
+)
+
+@Composable
+private fun OneUiCategorySelectionSheet(
     categories: List<CategoryWithSubcategories>,
     selectedUid: String?,
+    selectedType: TransactionType,
+    allTransactions: List<TransactionWithDetails>,
     typeColor: Color,
+    drillDownParent: CategoryWithSubcategories?,
+    onDrillDown: (CategoryWithSubcategories) -> Unit,
+    onBackFromDrillDown: () -> Unit,
     onClose: () -> Unit,
     onSelect: (uid: String, name: String, icon: String) -> Unit,
     onAddNewCategory: () -> Unit,
     onAddNewSubcategory: (parentUid: String, parentName: String) -> Unit
 ) {
-    var selectedParentUid by remember(categories, selectedUid) {
-        val initialParent = categories.firstOrNull { parent ->
-            parent.category.uid == selectedUid || parent.subcategories.any { it.uid == selectedUid }
-        } ?: categories.firstOrNull()
-        mutableStateOf(initialParent?.category?.uid)
+    var searchQuery by remember { mutableStateOf("") }
+
+    val recentCategories = remember(allTransactions, categories, selectedType) {
+        val targetType = if (selectedType == TransactionType.INCOME) CategoryType.INCOME else CategoryType.EXPENSE
+        val flatCats = categories.flatMap { listOf(it.category) + it.subcategories }
+        val flatMap = flatCats.associateBy { it.uid }
+
+        val found = allTransactions
+            .asSequence()
+            .filter { it.transaction.type == selectedType && it.category != null && it.category.type == targetType }
+            .mapNotNull { it.category?.uid }
+            .distinct()
+            .mapNotNull { flatMap[it] }
+            .take(3)
+            .toList()
+
+        if (found.isNotEmpty()) {
+            found
+        } else {
+            flatCats.take(3)
+        }
     }
 
-    val currentParent = categories.firstOrNull { it.category.uid == selectedParentUid }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(310.dp),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        color = OneUiTheme.colors.surface
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+    if (drillDownParent != null) {
+        // Screenshot 2: Subcategory Drill-Down View
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(OneUiTheme.colors.surface)
+        ) {
+            // Top Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(OneUiTheme.colors.surfaceElevated)
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                    .padding(horizontal = 8.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onBackFromDrillDown,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = OneUiTheme.colors.textPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = drillDownParent.category.name,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = OneUiTheme.colors.textPrimary,
+                        fontSize = 18.sp
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = OneUiTheme.colors.textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Breadcrumb
+            Text(
+                text = "CATEGORIES / ${drillDownParent.category.name.uppercase(Locale.getDefault())}",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = OneUiTheme.colors.textSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp
+                ),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Subcategories List
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                val isParentSelected = selectedUid == drillDownParent.category.uid
+                item(key = "general_option") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                onSelect(
+                                    drillDownParent.category.uid,
+                                    drillDownParent.category.name,
+                                    drillDownParent.category.icon
+                                )
+                            }
+                            .padding(horizontal = 8.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OneUiSelectionCircle(
+                            selected = isParentSelected,
+                            typeColor = typeColor
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = "${drillDownParent.category.name} (General)",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                color = if (isParentSelected) typeColor else OneUiTheme.colors.textPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = if (isParentSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        )
+                    }
+                }
+
+                items(drillDownParent.subcategories, key = { it.uid }) { sub ->
+                    val isSelected = selectedUid == sub.uid
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                onSelect(
+                                    sub.uid,
+                                    "${drillDownParent.category.name} / ${sub.name}",
+                                    sub.icon
+                                )
+                            }
+                            .padding(horizontal = 8.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OneUiSelectionCircle(
+                            selected = isSelected,
+                            typeColor = typeColor
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = sub.name,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                color = if (isSelected) typeColor else OneUiTheme.colors.textPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        )
+                    }
+                }
+
+                item(key = "add_new_subcategory") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                onAddNewSubcategory(
+                                    drillDownParent.category.uid,
+                                    drillDownParent.category.name
+                                )
+                            }
+                            .padding(horizontal = 8.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "New subcategory",
+                            tint = typeColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = "New subcategory",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = typeColor,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        // Screenshot 1: Main Category Selection View
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(OneUiTheme.colors.surface)
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -1175,228 +1553,336 @@ private fun OneUiCategorySplitPickerPanel(
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         color = OneUiTheme.colors.textPrimary,
-                        fontSize = 16.sp
+                        fontSize = 18.sp
                     )
                 )
-
                 IconButton(
                     onClick = onClose,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = OneUiTheme.colors.textSecondary, modifier = Modifier.size(18.dp))
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = OneUiTheme.colors.textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
 
-            Row(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(0.48f)
-                        .fillMaxHeight()
+            // Search Bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(CircleShape)
+                    .background(OneUiTheme.colors.surfaceElevated)
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(categories, key = { it.category.uid }) { parentWithSubs ->
-                        val isSelected = parentWithSubs.category.uid == selectedParentUid
-                        val isCurrentValue = parentWithSubs.category.uid == selectedUid ||
-                                parentWithSubs.subcategories.any { it.uid == selectedUid }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    if (isSelected) OneUiTheme.colors.surfaceElevated else Color.Transparent
-                                )
-                                .clickable {
-                                    if (selectedParentUid == parentWithSubs.category.uid && parentWithSubs.subcategories.isEmpty()) {
-                                        onSelect(
-                                            parentWithSubs.category.uid,
-                                            parentWithSubs.category.name,
-                                            parentWithSubs.category.icon
-                                        )
-                                    } else {
-                                        selectedParentUid = parentWithSubs.category.uid
-                                    }
-                                }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(parentWithSubs.category.icon, fontSize = 18.sp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = parentWithSubs.category.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = if (isSelected || isCurrentValue) typeColor else OneUiTheme.colors.textPrimary,
-                                    fontWeight = if (isSelected || isCurrentValue) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 14.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (parentWithSubs.subcategories.isNotEmpty()) {
-                                Icon(
-                                    Icons.Default.ChevronRight,
-                                    contentDescription = null,
-                                    tint = if (isSelected) typeColor else OneUiTheme.colors.textMuted,
-                                    modifier = Modifier.size(16.dp)
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = OneUiTheme.colors.textMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier.weight(1f),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = OneUiTheme.colors.textPrimary,
+                            fontSize = 15.sp
+                        ),
+                        singleLine = true,
+                        cursorBrush = SolidColor(typeColor),
+                        decorationBox = { inner ->
+                            if (searchQuery.isEmpty()) {
+                                Text(
+                                    text = "Search categories...",
+                                    color = OneUiTheme.colors.textMuted,
+                                    fontSize = 15.sp
                                 )
                             }
+                            inner()
                         }
-                        OneUiInsetDivider(startIndent = 42.dp)
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { searchQuery = "" },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear",
+                                tint = OneUiTheme.colors.textMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                if (searchQuery.isNotBlank()) {
+                    val query = searchQuery.trim().lowercase(Locale.getDefault())
+                    val matchingItems = buildList {
+                        categories.forEach { parentWithSubs ->
+                            val parentMatches = parentWithSubs.category.name.lowercase(Locale.getDefault()).contains(query)
+                            if (parentMatches) {
+                                add(
+                                    CategorySearchResult(
+                                        uid = parentWithSubs.category.uid,
+                                        displayName = parentWithSubs.category.name,
+                                        icon = parentWithSubs.category.icon,
+                                        isSubcategory = false,
+                                        parentName = null
+                                    )
+                                )
+                            }
+                            parentWithSubs.subcategories.forEach { sub ->
+                                if (sub.name.lowercase(Locale.getDefault()).contains(query) || parentMatches) {
+                                    add(
+                                        CategorySearchResult(
+                                            uid = sub.uid,
+                                            displayName = sub.name,
+                                            icon = sub.icon,
+                                            isSubcategory = true,
+                                            parentName = parentWithSubs.category.name
+                                        )
+                                    )
+                                }
+                            }
+                        }
                     }
 
-                    item {
+                    if (matchingItems.isEmpty()) {
+                        item(key = "empty_category_search") {
+                            Text(
+                                text = "No categories found for \"$searchQuery\"",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = OneUiTheme.colors.textMuted,
+                                    fontSize = 14.sp
+                                ),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 20.dp)
+                            )
+                        }
+                    } else {
+                        items(matchingItems, key = { it.uid }) { res ->
+                            val isSelected = selectedUid == res.uid
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        val fullName = if (res.isSubcategory && res.parentName != null) {
+                                            "${res.parentName} / ${res.displayName}"
+                                        } else {
+                                            res.displayName
+                                        }
+                                        onSelect(res.uid, fullName, res.icon)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OneUiSelectionCircle(selected = isSelected, typeColor = typeColor)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = res.displayName,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (isSelected) typeColor else OneUiTheme.colors.textPrimary,
+                                            fontSize = 15.sp
+                                        )
+                                    )
+                                    if (res.isSubcategory && res.parentName != null) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = res.parentName,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = OneUiTheme.colors.textSecondary,
+                                                fontSize = 12.sp
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // RECENTLY USED
+                    if (recentCategories.isNotEmpty()) {
+                        item(key = "section_recent") {
+                            Text(
+                                text = "RECENTLY USED",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.textSecondary,
+                                    letterSpacing = 0.8.sp,
+                                    fontSize = 11.sp
+                                ),
+                                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp, start = 4.dp)
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 16.dp),
+                                horizontalArrangement = Arrangement.SpaceAround
+                            ) {
+                                recentCategories.forEach { cat ->
+                                    Column(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable {
+                                                onSelect(cat.uid, cat.name, cat.icon)
+                                            }
+                                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        OneUiCategoryIcon(
+                                            icon = cat.icon,
+                                            name = cat.name,
+                                            modifier = Modifier.size(26.dp),
+                                            tint = OneUiTheme.colors.textPrimary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = cat.name,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = OneUiTheme.colors.textPrimary,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.Medium
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // All categories Header
+                    item(key = "section_all_categories") {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "All categories",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = OneUiTheme.colors.textPrimary,
+                                    fontSize = 16.sp
+                                )
+                            )
+                            Text(
+                                text = selectedType.displayName,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontSize = 13.sp
+                                )
+                            )
+                        }
+                    }
+
+                    // Categories List
+                    items(categories, key = { it.category.uid }) { parentWithSubs ->
+                        val parentCat = parentWithSubs.category
+                        val subtitle = getCategorySubtitle(parentWithSubs)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    if (parentWithSubs.subcategories.isNotEmpty()) {
+                                        onDrillDown(parentWithSubs)
+                                    } else {
+                                        onSelect(parentCat.uid, parentCat.name, parentCat.icon)
+                                    }
+                                }
+                                .padding(horizontal = 4.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OneUiCategoryIcon(
+                                icon = parentCat.icon,
+                                name = parentCat.name,
+                                modifier = Modifier.size(24.dp),
+                                tint = OneUiTheme.colors.textPrimary
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = parentCat.name,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = OneUiTheme.colors.textPrimary,
+                                        fontSize = 15.sp
+                                    )
+                                )
+                                if (subtitle.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = subtitle,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = OneUiTheme.colors.textSecondary,
+                                            fontSize = 12.5.sp
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = "Expand",
+                                tint = OneUiTheme.colors.textMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    // Add new category
+                    item(key = "add_new_category") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
                                 .clickable { onAddNewCategory() }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                .padding(horizontal = 4.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                Icons.Default.Add,
+                                imageVector = Icons.Default.Add,
                                 contentDescription = "New category",
                                 tint = typeColor,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(14.dp))
                             Text(
                                 text = "New category",
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     color = typeColor,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp
+                                    fontSize = 15.sp
                                 )
-                            )
-                        }
-                    }
-                }
-
-                VerticalDivider(color = OneUiTheme.colors.divider, thickness = 0.5.dp)
-
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(0.52f)
-                        .fillMaxHeight()
-                ) {
-                    if (currentParent != null) {
-                        val isParentSelected = currentParent.category.uid == selectedUid
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSelect(
-                                            currentParent.category.uid,
-                                            currentParent.category.name,
-                                            currentParent.category.icon
-                                        )
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OneUiRadioButton(
-                                    selected = isParentSelected,
-                                    onClick = {
-                                        onSelect(
-                                            currentParent.category.uid,
-                                            currentParent.category.name,
-                                            currentParent.category.icon
-                                        )
-                                    }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "${currentParent.category.name} (General)",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = if (isParentSelected) typeColor else OneUiTheme.colors.textPrimary,
-                                        fontWeight = if (isParentSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 14.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            OneUiInsetDivider(startIndent = 46.dp)
-                        }
-
-                        items(currentParent.subcategories, key = { it.uid }) { sub ->
-                            val isSubSelected = sub.uid == selectedUid
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSelect(
-                                            sub.uid,
-                                            "${currentParent.category.name} / ${sub.name}",
-                                            sub.icon
-                                        )
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OneUiRadioButton(
-                                    selected = isSubSelected,
-                                    onClick = {
-                                        onSelect(
-                                            sub.uid,
-                                            "${currentParent.category.name} / ${sub.name}",
-                                            sub.icon
-                                        )
-                                    }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = sub.name,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = if (isSubSelected) typeColor else OneUiTheme.colors.textPrimary,
-                                        fontWeight = if (isSubSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 14.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            OneUiInsetDivider(startIndent = 46.dp)
-                        }
-
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onAddNewSubcategory(
-                                            currentParent.category.uid,
-                                            currentParent.category.name
-                                        )
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Add,
-                                    contentDescription = "New subcategory",
-                                    tint = typeColor,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "New subcategory",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = typeColor,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp
-                                    )
-                                )
-                            }
-                        }
-                    } else {
-                        item {
-                            Text(
-                                text = "Select or add a category",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = OneUiTheme.colors.textMuted,
-                                    fontSize = 13.sp
-                                ),
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
                             )
                         }
                     }
@@ -1406,228 +1892,364 @@ private fun OneUiCategorySplitPickerPanel(
     }
 }
 
-private data class AccountGroupDef(
-    val name: String,
-    val defaultType: AccountType,
-    val accounts: List<AccountWithCurrency>
-)
-
 @Composable
-private fun OneUiAccountSplitPickerPanel(
+private fun OneUiAccountSelectionSheet(
     title: String,
     accounts: List<AccountWithCurrency>,
     selectedUid: String,
+    allTransactions: List<TransactionWithDetails>,
     typeColor: Color,
     onClose: () -> Unit,
     onSelect: (uid: String) -> Unit,
     onAddNewAccount: (defaultType: AccountType) -> Unit
 ) {
-    val groups = remember(accounts) {
-        listOf(
-            AccountGroupDef("Cards", AccountType.CREDIT_CARD, accounts.filter { it.account.accountType == AccountType.CREDIT_CARD }),
-            AccountGroupDef("Cash", AccountType.CASH, accounts.filter { it.account.accountType == AccountType.CASH }),
-            AccountGroupDef("Accounts", AccountType.SAVINGS, accounts.filter { it.account.accountType in listOf(AccountType.SAVINGS, AccountType.UPI_DEBIT) }),
-            AccountGroupDef("Investments", AccountType.MUTUAL_FUNDS, accounts.filter { it.account.accountType in listOf(AccountType.INVESTMENT, AccountType.MUTUAL_FUNDS, AccountType.EQUITY) }),
-            AccountGroupDef("Wallets", AccountType.WALLET, accounts.filter { it.account.accountType == AccountType.WALLET }),
-            AccountGroupDef("Other", AccountType.OTHER, accounts.filter { it.account.accountType in listOf(AccountType.LOAN, AccountType.OTHER) })
-        )
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf("All") }
+
+    val filterChips = remember {
+        listOf("All", "Cards", "Cash", "Accounts", "Investments", "Wallets")
     }
 
-    var selectedGroupName by remember(groups, selectedUid) {
-        val initialGroup = groups.firstOrNull { it.accounts.any { acc -> acc.account.uid == selectedUid } }
-            ?: groups.firstOrNull { it.accounts.isNotEmpty() }
-            ?: groups.firstOrNull()
-        mutableStateOf(initialGroup?.name)
+    val recentAccounts = remember(allTransactions, accounts) {
+        val accMap = accounts.associateBy { it.account.uid }
+        val found = allTransactions
+            .asSequence()
+            .map { it.transaction.accountUid }
+            .distinct()
+            .mapNotNull { accMap[it] }
+            .take(2)
+            .toList()
+
+        if (found.isNotEmpty()) {
+            found
+        } else {
+            accounts.take(2)
+        }
     }
 
-    val currentGroup = groups.firstOrNull { it.name == selectedGroupName }
-    val currentAccountsInGroup = currentGroup?.accounts ?: emptyList()
+    val filteredAccounts = remember(accounts, selectedFilter, searchQuery) {
+        accounts.filter { acc ->
+            val matchesFilter = when (selectedFilter) {
+                "All" -> true
+                "Cards" -> acc.account.accountType == AccountType.CREDIT_CARD
+                "Cash" -> acc.account.accountType == AccountType.CASH
+                "Accounts" -> acc.account.accountType in listOf(AccountType.SAVINGS, AccountType.UPI_DEBIT)
+                "Investments" -> acc.account.accountType in listOf(AccountType.INVESTMENT, AccountType.MUTUAL_FUNDS, AccountType.EQUITY)
+                "Wallets" -> acc.account.accountType == AccountType.WALLET
+                "Other" -> acc.account.accountType in listOf(AccountType.LOAN, AccountType.OTHER)
+                else -> true
+            }
+            val matchesSearch = searchQuery.isBlank() || acc.account.name.contains(searchQuery, ignoreCase = true)
+            matchesFilter && matchesSearch
+        }
+    }
 
-    Surface(
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(310.dp),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        color = OneUiTheme.colors.surface
+            .fillMaxSize()
+            .background(OneUiTheme.colors.surface)
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(OneUiTheme.colors.surfaceElevated)
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = OneUiTheme.colors.textPrimary,
-                        fontSize = 16.sp
-                    )
+        // Top Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = OneUiTheme.colors.textPrimary,
+                    fontSize = 18.sp
                 )
+            )
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close",
+                    tint = OneUiTheme.colors.textSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
 
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.size(28.dp)
+        // Search Bar
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clip(CircleShape)
+                .background(OneUiTheme.colors.surfaceElevated)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = OneUiTheme.colors.textMuted,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                BasicTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = OneUiTheme.colors.textPrimary,
+                        fontSize = 15.sp
+                    ),
+                    singleLine = true,
+                    cursorBrush = SolidColor(typeColor),
+                    decorationBox = { inner ->
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = "Search accounts...",
+                                color = OneUiTheme.colors.textMuted,
+                                fontSize = 15.sp
+                            )
+                        }
+                        inner()
+                    }
+                )
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(
+                        onClick = { searchQuery = "" },
+                        modifier = Modifier.size(20.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Clear",
+                            tint = OneUiTheme.colors.textMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Filter Chips Row
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(filterChips) { chip ->
+                val isSelected = chip == selectedFilter
+                val chipBg = if (isSelected) {
+                    OneUiTheme.colors.badgePurple
+                } else {
+                    OneUiTheme.colors.surfaceElevated
+                }
+                val chipText = if (isSelected) Color.White else OneUiTheme.colors.textPrimary
+
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(chipBg)
+                        .clickable { selectedFilter = chip }
+                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = OneUiTheme.colors.textSecondary, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = chip,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = chipText,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 13.sp
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Scrollable Accounts List
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 24.dp)
+        ) {
+            // RECENTLY USED
+            if (searchQuery.isBlank() && recentAccounts.isNotEmpty()) {
+                item(key = "section_recent_accounts") {
+                    Text(
+                        text = "RECENTLY USED",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = OneUiTheme.colors.textSecondary,
+                            letterSpacing = 0.8.sp,
+                            fontSize = 11.sp
+                        ),
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp, start = 4.dp)
+                    )
+                }
+
+                items(recentAccounts, key = { "recent_${it.account.uid}" }) { accWithCurr ->
+                    val (cleanName, subtitle) = getAccountDisplayInfo(accWithCurr.account)
+                    val isSelected = accWithCurr.account.uid == selectedUid
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onSelect(accWithCurr.account.uid) }
+                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OneUiAccountTypeIcon(
+                            accountType = accWithCurr.account.accountType,
+                            modifier = Modifier.size(24.dp),
+                            tint = OneUiTheme.colors.textPrimary
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = cleanName,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = OneUiTheme.colors.textPrimary,
+                                    fontSize = 15.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontSize = 13.sp
+                                )
+                            )
+                        }
+                        OneUiSelectionCircle(
+                            selected = isSelected,
+                            typeColor = typeColor
+                        )
+                    }
+                }
+
+                item(key = "spacer_recent") {
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             }
 
-            Row(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(0.44f)
-                        .fillMaxHeight()
-                ) {
-                    items(groups, key = { it.name }) { group ->
-                        val isSelected = group.name == selectedGroupName
-                        val containsActiveAccount = group.accounts.any { it.account.uid == selectedUid }
+            // ALL ACCOUNTS · [FILTER]
+            val sectionTitle = if (selectedFilter == "All") "ALL ACCOUNTS" else "ALL ACCOUNTS · ${selectedFilter.uppercase(Locale.getDefault())}"
+            item(key = "section_all_accounts") {
+                Text(
+                    text = sectionTitle,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = OneUiTheme.colors.textSecondary,
+                        letterSpacing = 0.8.sp,
+                        fontSize = 11.sp
+                    ),
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp, start = 4.dp)
+                )
+            }
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    if (isSelected) OneUiTheme.colors.surfaceElevated else Color.Transparent
-                                )
-                                .clickable { selectedGroupName = group.name }
-                                .padding(horizontal = 16.dp, vertical = 13.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = group.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = if (isSelected || containsActiveAccount) typeColor else OneUiTheme.colors.textPrimary,
-                                    fontWeight = if (isSelected || containsActiveAccount) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 14.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Icon(
-                                Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                tint = if (isSelected) typeColor else OneUiTheme.colors.textMuted,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        OneUiInsetDivider(startIndent = 16.dp)
-                    }
+            if (filteredAccounts.isEmpty()) {
+                item(key = "empty_accounts") {
+                    Text(
+                        text = "No accounts found",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = OneUiTheme.colors.textMuted,
+                            fontSize = 14.sp
+                        ),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)
+                    )
+                }
+            } else {
+                items(filteredAccounts, key = { it.account.uid }) { accWithCurr ->
+                    val (cleanName, subtitle) = getAccountDisplayInfo(accWithCurr.account)
+                    val isSelected = accWithCurr.account.uid == selectedUid
 
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onAddNewAccount(AccountType.SAVINGS) }
-                                .padding(horizontal = 16.dp, vertical = 13.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "New account",
-                                tint = typeColor,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onSelect(accWithCurr.account.uid) }
+                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OneUiAccountTypeIcon(
+                            accountType = accWithCurr.account.accountType,
+                            modifier = Modifier.size(24.dp),
+                            tint = OneUiTheme.colors.textPrimary
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "New account",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = typeColor,
+                                text = cleanName,
+                                style = MaterialTheme.typography.bodyLarge.copy(
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp
+                                    color = OneUiTheme.colors.textPrimary,
+                                    fontSize = 15.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontSize = 13.sp
                                 )
                             )
                         }
+                        OneUiSelectionCircle(
+                            selected = isSelected,
+                            typeColor = typeColor
+                        )
                     }
                 }
+            }
 
-                VerticalDivider(color = OneUiTheme.colors.divider, thickness = 0.5.dp)
+            // New account button
+            item(key = "add_new_account") {
+                val defaultTypeForFilter = when (selectedFilter) {
+                    "Cards" -> AccountType.CREDIT_CARD
+                    "Cash" -> AccountType.CASH
+                    "Investments" -> AccountType.MUTUAL_FUNDS
+                    "Wallets" -> AccountType.WALLET
+                    else -> AccountType.SAVINGS
+                }
 
-                LazyColumn(
+                Row(
                     modifier = Modifier
-                        .weight(0.56f)
-                        .fillMaxHeight()
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onAddNewAccount(defaultTypeForFilter) }
+                        .padding(horizontal = 4.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (currentAccountsInGroup.isEmpty()) {
-                        item {
-                            Text(
-                                text = "No accounts in ${selectedGroupName ?: "group"}",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = OneUiTheme.colors.textMuted,
-                                    fontSize = 13.sp
-                                ),
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                            )
-                            OneUiInsetDivider(startIndent = 16.dp)
-                        }
-                    } else {
-                        items(currentAccountsInGroup, key = { it.account.uid }) { accWithCurr ->
-                            val isAccSelected = accWithCurr.account.uid == selectedUid
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onSelect(accWithCurr.account.uid) }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OneUiRadioButton(
-                                    selected = isAccSelected,
-                                    onClick = { onSelect(accWithCurr.account.uid) }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = accWithCurr.account.name,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = if (isAccSelected) typeColor else OneUiTheme.colors.textPrimary,
-                                        fontWeight = if (isAccSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 14.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (accWithCurr.currency.isCustom) {
-                                    Text(
-                                        text = accWithCurr.currency.symbol,
-                                        color = OneUiTheme.colors.textMuted,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            }
-                            OneUiInsetDivider(startIndent = 46.dp)
-                        }
-                    }
-
-                    item {
-                        val defType = currentGroup?.defaultType ?: AccountType.SAVINGS
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onAddNewAccount(defType) }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = "New account",
-                                tint = typeColor,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "New account",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = typeColor,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp
-                                )
-                            )
-                        }
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "New account",
+                        tint = typeColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Text(
+                        text = "New account",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = typeColor,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp
+                        )
+                    )
                 }
             }
         }

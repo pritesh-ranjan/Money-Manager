@@ -5,13 +5,19 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.moneymanager.app.data.local.dao.GmailImportDao
+import com.moneymanager.app.data.local.dao.GmailSyncDao
 import com.moneymanager.app.data.local.dao.InsightsDao
 import com.moneymanager.app.data.local.dao.MoneyManagerDao
+import com.moneymanager.app.data.local.dao.StatementDao
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.GmailImportHistoryEntity
+import com.moneymanager.app.data.local.entity.GmailSyncStateEntity
 import com.moneymanager.app.data.local.entity.InsightEntity
 import com.moneymanager.app.data.local.entity.InsightTransactionCrossRef
 import com.moneymanager.app.data.local.entity.RecurrenceDecisionEntity
@@ -33,15 +39,21 @@ import java.util.UUID
         TransactionTagCrossRef::class,
         InsightEntity::class,
         InsightTransactionCrossRef::class,
-        RecurrenceDecisionEntity::class
+        RecurrenceDecisionEntity::class,
+        CardStatementTransactionEntity::class,
+        GmailImportHistoryEntity::class,
+        GmailSyncStateEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun moneyManagerDao(): MoneyManagerDao
     abstract fun insightsDao(): InsightsDao
+    abstract fun statementDao(): StatementDao
+    abstract fun gmailImportDao(): GmailImportDao
+    abstract fun gmailSyncDao(): GmailSyncDao
 
     companion object {
         @Volatile
@@ -54,7 +66,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "money_manager.db"
                 )
-                    .addMigrations(Migrations.MIGRATION_1_2)
+                    .addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3, Migrations.MIGRATION_3_4)
                     .addCallback(DatabaseCallback(scope))
                     .fallbackToDestructiveMigration()
                     .build()

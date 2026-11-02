@@ -30,6 +30,16 @@ import com.moneymanager.app.domain.NetWorthSummary
 import com.moneymanager.app.domain.insights.DetectorConfig
 import com.moneymanager.app.domain.insights.InsightPreferencesManager
 import com.moneymanager.app.work.InsightWorkScheduler
+import com.moneymanager.app.data.StatementRepository
+import com.moneymanager.app.data.local.entity.GmailImportHistoryEntity
+import com.moneymanager.app.data.local.entity.GmailSyncStateEntity
+import com.moneymanager.app.data.local.entity.GmailSyncStatus
+import com.moneymanager.app.domain.gmail.auth.GmailOAuthManager
+import com.moneymanager.app.domain.gmail.auth.GmailTokenStorage
+import com.moneymanager.app.domain.gmail.auth.OAuthResult
+import com.moneymanager.app.domain.gmail.sync.GmailSyncEngine
+import com.moneymanager.app.domain.gmail.sync.SyncOutcome
+import com.moneymanager.app.work.GmailWorkScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -53,6 +63,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application, viewModelScope)
     private val repository = MoneyManagerRepository(db.moneyManagerDao(), db.insightsDao())
+    val statementRepository = StatementRepository(db.statementDao())
+    val gmailImportDao = db.gmailImportDao()
+    val gmailSyncDao = db.gmailSyncDao()
+    val gmailOAuthManager = GmailOAuthManager()
+    val gmailSyncEngine = GmailSyncEngine(oauthManager = gmailOAuthManager)
+
+    val gmailSyncState: StateFlow<GmailSyncStateEntity?> = gmailSyncDao.getSyncState()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val gmailImportHistory: StateFlow<List<GmailImportHistoryEntity>> = gmailImportDao.getAllHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _isGmailSyncing = MutableStateFlow(false)
+    val isGmailSyncing: StateFlow<Boolean> = _isGmailSyncing.asStateFlow()
 
     // Current selected month for ledger
     private val _selectedYearMonth = MutableStateFlow(YearMonth.now())
@@ -461,5 +485,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateDetectorConfig(config: DetectorConfig) {
         InsightPreferencesManager.updateConfig(config)
         runAnalysisNow()
+    }
+
+    // --- Gmail Statement Importer Actions ---
+
+    fun handleGmailOAuthRedirect(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isGmailSyncing.value = true
+            when (val result = gmailOAuthManager.handleRedirectUri(getApplication(), uri)) {
+                is OAuthResult.Success -> {
+                    val email = gmailSyncEngine.connectAndInitializeBaseline(
+                        context = getApplication(),
+                        importDao = gmailImportDao,
+                        syncDao = gmailSyncDao
+                    )
+                    GmailWorkScheduler.schedulePeriodic(getApplication())
+                    _uiMessage.value = UiMessage.Success("Connected to Gmail: ${email ?: "Account linked"}")
+                }
+                is OAuthResult.Error -> {
+                    _uiMessage.value = UiMessage.Error("Connection failed: ${result.message}")
+                }
+            }
+            _isGmailSyncing.value = false
+        }
+    }
+
+    fun triggerManualGmailSync() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isGmailSyncing.value = true
+            when (val outcome = gmailSyncEngine.syncIncremental(
+                context = getApplication(),
+                importDao = gmailImportDao,
+                syncDao = gmailSyncDao,
+                statementRepository = statementRepository
+            )) {
+                is SyncOutcome.Success -> {
+                    if (outcome.newStatementsCount > 0) {
+                        _uiMessage.value = UiMessage.Success("Imported ${outcome.newStatementsCount} new statement(s)")
+                    } else {
+                        _uiMessage.value = UiMessage.Success("Sync complete. No new bank statements found.")
+                    }
+                }
+                is SyncOutcome.Error -> {
+                    _uiMessage.value = UiMessage.Error("Sync error: ${outcome.message}")
+                }
+            }
+            _isGmailSyncing.value = false
+        }
+    }
+
+    fun disconnectGmail() {
+        viewModelScope.launch(Dispatchers.IO) {
+            gmailOAuthManager.disconnectAndRevoke(getApplication())
+            gmailSyncDao.clearSyncState()
+            GmailWorkScheduler.cancelPeriodic(getApplication())
+            _uiMessage.value = UiMessage.Success("Disconnected and revoked Gmail access")
+        }
+    }
+
+    fun updateGmailAutoSyncEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            gmailSyncDao.setAutoSyncEnabled(enabled)
+            if (enabled) {
+                GmailWorkScheduler.schedulePeriodic(getApplication())
+            } else {
+                GmailWorkScheduler.cancelPeriodic(getApplication())
+            }
+            _uiMessage.value = UiMessage.Success(if (enabled) "Daily background sync enabled" else "Daily background sync disabled")
+        }
+    }
+
+    fun saveDefaultPdfPassword(password: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            GmailTokenStorage.saveDefaultPdfPassword(getApplication(), password)
+            gmailSyncDao.setDefaultPdfPassword(password)
+            _uiMessage.value = UiMessage.Success("Default statement password saved")
+        }
+    }
+
+    fun saveCustomOAuthCredentials(clientId: String?, clientSecret: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            GmailTokenStorage.saveClientCredentials(getApplication(), clientId, clientSecret)
+            _uiMessage.value = UiMessage.Success("OAuth credentials updated")
+        }
+    }
+
+    fun clearGmailImportHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            gmailImportDao.clearHistory()
+            _uiMessage.value = UiMessage.Success("Statement import history cleared")
+        }
     }
 }

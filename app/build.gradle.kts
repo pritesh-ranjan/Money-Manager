@@ -23,8 +23,8 @@ android {
     applicationId = "com.moneymanager.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 7
-    versionName = "1.0.6"
+    versionCode = 8
+    versionName = "1.0.7"
   }
 
   signingConfigs {
@@ -76,6 +76,12 @@ android {
       excludes += "/META-INF/{AL2.0,LGPL2.1}"
       excludes += "/META-INF/*.kotlin_module"
       excludes += "/META-INF/version-control-info.textproto"
+    }
+  }
+
+  testOptions {
+    unitTests {
+      isReturnDefaultValues = true
     }
   }
 }
@@ -135,4 +141,13 @@ dependencies {
 
   // WorkManager (Background Reconciliation)
   implementation(libs.androidx.work.runtime)
+
+  // PDFBox for Android (Bank Statement Parsing Engine)
+  implementation(libs.pdfbox.android)
+
+  // OkHttp (Direct official Google OAuth 2.0 & Gmail v1 REST API)
+  implementation(libs.okhttp)
+
+  // Chrome Custom Tabs (Secure OAuth flow with explicit consent)
+  implementation(libs.androidx.browser)
 }

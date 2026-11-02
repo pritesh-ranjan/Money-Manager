@@ -63,4 +63,97 @@ object Migrations {
             """.trimIndent())
         }
     }
+
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS `card_statement_transactions` (
+                    `uid` TEXT NOT NULL,
+                    `statementId` TEXT NOT NULL,
+                    `bankId` TEXT NOT NULL,
+                    `bankName` TEXT NOT NULL,
+                    `accountOrCardNumberMasked` TEXT NOT NULL,
+                    `accountHolderName` TEXT NOT NULL,
+                    `statementYearMonth` TEXT NOT NULL,
+                    `statementDateEpochDay` INTEGER NOT NULL,
+                    `paymentDueDateEpochDay` INTEGER,
+                    `billingPeriodStartEpochDay` INTEGER,
+                    `billingPeriodEndEpochDay` INTEGER,
+                    `creditLimit` REAL,
+                    `availableCredit` REAL,
+                    `cashLimit` REAL,
+                    `previousBalance` REAL NOT NULL,
+                    `statementPurchasesOrDebits` REAL NOT NULL,
+                    `statementPaymentsOrCredits` REAL NOT NULL,
+                    `statementTotalDue` REAL NOT NULL,
+                    `statementMinDue` REAL,
+                    `isReconciled` INTEGER NOT NULL,
+                    `rewardType` TEXT,
+                    `rewardEarned` REAL,
+                    `rewardRedeemedOrCredited` REAL,
+                    `rewardClosingBalance` REAL,
+                    `rewardProgramName` TEXT,
+                    `serialNumber` INTEGER NOT NULL,
+                    `transactionDateEpochDay` INTEGER NOT NULL,
+                    `referenceNumber` TEXT,
+                    `rawNarration` TEXT NOT NULL,
+                    `cleanNarration` TEXT NOT NULL,
+                    `amount` REAL NOT NULL,
+                    `isCredit` INTEGER NOT NULL,
+                    `debit` REAL,
+                    `credit` REAL,
+                    `rewardPoints` INTEGER,
+                    `pageNumber` INTEGER NOT NULL,
+                    `importedAtTimestamp` INTEGER NOT NULL,
+                    PRIMARY KEY(`uid`)
+                )
+            """.trimIndent())
+
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_statementId` ON `card_statement_transactions` (`statementId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_accountOrCardNumberMasked` ON `card_statement_transactions` (`accountOrCardNumberMasked`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_statementYearMonth` ON `card_statement_transactions` (`statementYearMonth`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_accountOrCardNumberMasked_statementYearMonth` ON `card_statement_transactions` (`accountOrCardNumberMasked`, `statementYearMonth`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_transactionDateEpochDay` ON `card_statement_transactions` (`transactionDateEpochDay`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_bankId` ON `card_statement_transactions` (`bankId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_statement_transactions_referenceNumber` ON `card_statement_transactions` (`referenceNumber`)")
+        }
+    }
+
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS `gmail_import_history` (
+                    `messageId` TEXT NOT NULL,
+                    `sender` TEXT NOT NULL,
+                    `subject` TEXT NOT NULL,
+                    `receivedEpochMillis` INTEGER NOT NULL,
+                    `bankName` TEXT NOT NULL,
+                    `fileName` TEXT NOT NULL,
+                    `importStatus` TEXT NOT NULL,
+                    `statementId` TEXT,
+                    `errorMessage` TEXT,
+                    `importedAtEpochMillis` INTEGER NOT NULL,
+                    PRIMARY KEY(`messageId`)
+                )
+            """.trimIndent())
+
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_gmail_import_history_messageId` ON `gmail_import_history` (`messageId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_gmail_import_history_receivedEpochMillis` ON `gmail_import_history` (`receivedEpochMillis`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_gmail_import_history_bankName` ON `gmail_import_history` (`bankName`)")
+
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS `gmail_sync_state` (
+                    `id` INTEGER NOT NULL,
+                    `accountEmail` TEXT,
+                    `lastHistoryId` TEXT,
+                    `lastSyncTimestamp` INTEGER NOT NULL,
+                    `lastSyncStatus` TEXT NOT NULL,
+                    `lastSyncError` TEXT,
+                    `isAutoSyncEnabled` INTEGER NOT NULL,
+                    `defaultPdfPasswordEncrypted` TEXT,
+                    PRIMARY KEY(`id`)
+                )
+            """.trimIndent())
+        }
+    }
 }

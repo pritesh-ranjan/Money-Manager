@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
@@ -21,13 +22,16 @@ import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.domain.AppLockManager
 import com.moneymanager.app.notifications.QuickAddNotificationManager
 import com.moneymanager.app.ui.main.MainScreen
+import com.moneymanager.app.ui.main.MainViewModel
 import com.moneymanager.app.ui.screens.AppLockScreen
 import com.moneymanager.app.ui.theme.AmoledBlack
 import com.moneymanager.app.ui.theme.MoneyManagerTheme
+import com.moneymanager.app.work.GmailWorkScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
 
+    private val mainViewModel: MainViewModel by viewModels()
     private val pendingQuickAddType = MutableStateFlow<TransactionType?>(null)
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -45,6 +49,7 @@ class MainActivity : ComponentActivity() {
         com.moneymanager.app.domain.insights.InsightPreferencesManager.init(this)
         com.moneymanager.app.work.InsightWorkScheduler.schedulePeriodic(this)
         com.moneymanager.app.work.InsightWorkScheduler.runNow(this)
+        GmailWorkScheduler.schedulePeriodic(this)
         // Prevent screen capture and task switcher thumbnail leaks when app lock is active
         if (AppLockManager.isLockConfigured()) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
@@ -53,6 +58,7 @@ class MainActivity : ComponentActivity() {
 
         ensurePersistentNotification()
         handleQuickAddIntent(intent)
+        handleOAuthRedirect(intent)
 
         setContent {
             MoneyManagerTheme {
@@ -65,6 +71,7 @@ class MainActivity : ComponentActivity() {
 
                     // MainScreen always stays composed so in-flight state, sheets and activity result launchers survive locking
                     MainScreen(
+                        viewModel = mainViewModel,
                         quickAddType = if (isLocked) null else quickAddType,
                         onQuickAddConsumed = {
                             pendingQuickAddType.value = null
@@ -100,6 +107,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleQuickAddIntent(intent)
+        handleOAuthRedirect(intent)
     }
 
     override fun onStart() {
@@ -134,6 +142,14 @@ class MainActivity : ComponentActivity() {
         if (resolvedType != null) {
             pendingQuickAddType.value = resolvedType
             intent?.action = null
+        }
+    }
+
+    private fun handleOAuthRedirect(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "com.moneymanager.app" && data.host == "oauth2redirect") {
+            mainViewModel.handleGmailOAuthRedirect(data)
+            intent.data = null
         }
     }
 }

@@ -191,9 +191,12 @@ class DataLeakageSecurityTest {
 
         assertTrue("Manifest must declare POST_NOTIFICATIONS", content.contains("android.permission.POST_NOTIFICATIONS"))
         assertTrue("Manifest must declare RECEIVE_BOOT_COMPLETED", content.contains("android.permission.RECEIVE_BOOT_COMPLETED"))
-        assertTrue("Manifest must strip INTERNET permission", content.contains("android.permission.INTERNET") && content.contains("tools:node=\"remove\""))
+        assertTrue("Manifest must declare INTERNET for direct Google API sync", content.contains("android.permission.INTERNET") && !content.contains("<uses-permission android:name=\"android.permission.INTERNET\" tools:node=\"remove\""))
+        assertTrue("Manifest must declare ACCESS_NETWORK_STATE for WorkManager constraints", content.contains("android.permission.ACCESS_NETWORK_STATE"))
+        assertTrue("Manifest must strip legacy storage permissions", content.contains("android.permission.READ_EXTERNAL_STORAGE") && content.contains("tools:node=\"remove\""))
         assertTrue("Manifest must disable cleartext traffic", content.contains("android:usesCleartextTraffic=\"false\""))
         assertTrue("Manifest must register QuickAddNotificationReceiver", content.contains(".notifications.QuickAddNotificationReceiver"))
+        assertTrue("Manifest must register oauth2redirect intent-filter", content.contains("android:scheme=\"com.moneymanager.app\"") && content.contains("android:host=\"oauth2redirect\""))
     }
 
     @Test

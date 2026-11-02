@@ -32,3 +32,7 @@
     public static int v(...);
     public static int d(...);
 }
+
+# PDFBox for Android
+-dontwarn com.gemalto.jp2.**
+-keep class com.tom_roush.pdfbox.** { *; }

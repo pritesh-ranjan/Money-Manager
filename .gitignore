@@ -33,6 +33,8 @@ Thumbs.db
 *.keystore
 keystore.properties
 /keystore/
+.env
+statement_credentials.properties
 
 # Financial Database & Backup files (Prevent Data Leakage)
 *.mmbak
@@ -41,3 +43,5 @@ keystore.properties
 *.db
 *.db-wal
 *.db-shm
+pdfs/
+*.pdf
