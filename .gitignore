@@ -37,6 +37,7 @@ keystore.properties
 statement_credentials.properties
 
 # Financial Database & Backup files (Prevent Data Leakage)
+/archive/
 *.mmbak
 *.sqlite
 *.sqlite3

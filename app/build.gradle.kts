@@ -76,6 +76,8 @@ android {
       excludes += "/META-INF/{AL2.0,LGPL2.1}"
       excludes += "/META-INF/*.kotlin_module"
       excludes += "/META-INF/version-control-info.textproto"
+      excludes += "org/bouncycastle/pqc/**"
+      excludes += "/org/bouncycastle/pqc/**"
     }
   }
 
