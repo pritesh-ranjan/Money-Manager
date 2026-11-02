@@ -37,6 +37,8 @@ interface StatementDao {
             statementYearMonth,
             statementDateEpochDay,
             paymentDueDateEpochDay,
+            MIN(billingPeriodStartEpochDay) as billingPeriodStartEpochDay,
+            MAX(billingPeriodEndEpochDay) as billingPeriodEndEpochDay,
             statementTotalDue,
             statementMinDue,
             isReconciled,
@@ -59,6 +61,8 @@ interface StatementDao {
             statementYearMonth,
             statementDateEpochDay,
             paymentDueDateEpochDay,
+            MIN(billingPeriodStartEpochDay) as billingPeriodStartEpochDay,
+            MAX(billingPeriodEndEpochDay) as billingPeriodEndEpochDay,
             statementTotalDue,
             statementMinDue,
             isReconciled,
@@ -82,6 +86,12 @@ interface StatementDao {
 
     @Query("DELETE FROM card_statement_transactions WHERE accountOrCardNumberMasked = :cardMasked AND statementYearMonth = :yearMonth")
     suspend fun deleteStatementByCardAndMonth(cardMasked: String, yearMonth: String)
+
+    @Query("UPDATE card_statement_transactions SET isReconciled = :isPaid WHERE statementId = :statementId")
+    suspend fun updateStatementPaidStatus(statementId: String, isPaid: Boolean)
+
+    @Query("SELECT * FROM card_statement_transactions ORDER BY transactionDateEpochDay DESC, serialNumber ASC LIMIT :limit")
+    fun getRecentSpends(limit: Int = 200): Flow<List<CardStatementTransactionEntity>>
 
     @Transaction
     suspend fun replaceStatement(statementId: String, transactions: List<CardStatementTransactionEntity>) {

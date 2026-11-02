@@ -34,6 +34,17 @@ import com.moneymanager.app.data.StatementRepository
 import com.moneymanager.app.data.local.entity.GmailImportHistoryEntity
 import com.moneymanager.app.data.local.entity.GmailSyncStateEntity
 import com.moneymanager.app.data.local.entity.GmailSyncStatus
+import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
+import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
+import com.moneymanager.app.domain.statement.reconciliation.CardStatementReconciler
+import com.moneymanager.app.domain.statement.reconciliation.StatementReconciliationReport
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
+import java.util.Locale
+import java.util.UUID
+import kotlinx.coroutines.flow.Flow
 import com.moneymanager.app.domain.gmail.auth.GmailOAuthManager
 import com.moneymanager.app.domain.gmail.auth.GmailTokenStorage
 import com.moneymanager.app.domain.gmail.auth.OAuthResult
@@ -49,10 +60,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.time.LocalDate
-import java.time.YearMonth
-import java.time.ZoneId
-import java.util.UUID
 
 sealed class UiMessage {
     data class Success(val message: String) : UiMessage()
@@ -124,6 +131,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val creditCards: StateFlow<List<CreditCardCycleSummary>> = repository.creditCardSummaries
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val statementSummaries: StateFlow<List<CardStatementSummaryRecord>> = statementRepository.getStatementSummaries()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val unbilledCardSpends: StateFlow<List<TransactionWithDetails>> = allTransactionsUnfiltered.map { list ->
+        list.filter { it.account.accountType == AccountType.CREDIT_CARD && it.transaction.type == TransactionType.EXPENSE }
+            .sortedByDescending { it.transaction.timestamp }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val monthlyMoneyStory: StateFlow<MonthlyMoneyStory?> = combine(
         allTransactionsUnfiltered,
@@ -574,6 +589,112 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             gmailImportDao.clearHistory()
             _uiMessage.value = UiMessage.Success("Statement import history cleared")
+        }
+    }
+
+    fun getStatementTransactions(statementId: String): Flow<List<CardStatementTransactionEntity>> {
+        return statementRepository.getTransactionsByStatementId(statementId)
+    }
+
+    fun markStatementPaid(statementId: String, isPaid: Boolean) {
+        viewModelScope.launch {
+            statementRepository.setStatementPaidStatus(statementId, isPaid)
+            _uiMessage.value = UiMessage.Success(if (isPaid) "Statement marked as paid" else "Statement marked as unpaid")
+        }
+    }
+
+    fun payStatementBill(
+        summary: CardStatementSummaryRecord,
+        fromAccountUid: String,
+        amount: Double
+    ) {
+        viewModelScope.launch {
+            val toAccount = accounts.value.firstOrNull {
+                it.account.accountType == AccountType.CREDIT_CARD &&
+                    (it.account.name.contains(summary.accountOrCardNumberMasked.takeLast(4)) ||
+                        it.account.name.contains(summary.bankName, ignoreCase = true))
+            }?.account
+
+            if (toAccount != null) {
+                val paymentTx = TransactionEntity(
+                    uid = UUID.randomUUID().toString(),
+                    type = TransactionType.TRANSFER,
+                    accountAmount = amount,
+                    baseAmount = amount,
+                    currencyUid = toAccount.currencyUid,
+                    accountUid = fromAccountUid,
+                    toAccountUid = toAccount.uid,
+                    toAccountAmount = amount,
+                    note = "Credit Card Bill Payment",
+                    description = "${summary.bankName} (${summary.accountOrCardNumberMasked.takeLast(4)}) Statement ${summary.statementYearMonth}",
+                    timestamp = System.currentTimeMillis()
+                )
+                repository.saveTransaction(paymentTx)
+            } else {
+                val fromAccount = accounts.value.firstOrNull { it.account.uid == fromAccountUid }?.account
+                if (fromAccount != null) {
+                    val paymentTx = TransactionEntity(
+                        uid = UUID.randomUUID().toString(),
+                        type = TransactionType.EXPENSE,
+                        accountAmount = amount,
+                        baseAmount = amount,
+                        currencyUid = fromAccount.currencyUid,
+                        accountUid = fromAccountUid,
+                        note = "Bill Payment: ${summary.bankName}",
+                        description = "Statement ${summary.statementYearMonth} for ${summary.accountOrCardNumberMasked}",
+                        timestamp = System.currentTimeMillis()
+                    )
+                    repository.saveTransaction(paymentTx)
+                }
+            }
+            statementRepository.setStatementPaidStatus(summary.statementId, isPaid = true)
+            _uiMessage.value = UiMessage.Success("Paid bill of ₹${String.format(Locale.getDefault(), "%.2f", amount)} for ${summary.bankName}")
+        }
+    }
+
+    suspend fun getReconciliationReport(summary: CardStatementSummaryRecord): StatementReconciliationReport {
+        val stmtTxs = statementRepository.getTransactionsByStatementIdRaw(summary.statementId)
+        val manualCardTxs = allTransactionsUnfiltered.value.filter {
+            it.account.accountType == AccountType.CREDIT_CARD &&
+                (it.account.name.contains(summary.accountOrCardNumberMasked.takeLast(4)) ||
+                    it.account.name.contains(summary.bankName, ignoreCase = true))
+        }
+        val firstTx = stmtTxs.firstOrNull()
+        return CardStatementReconciler.reconcile(
+            statementId = summary.statementId,
+            cardMasked = summary.accountOrCardNumberMasked,
+            statementTransactions = stmtTxs,
+            manualTransactions = manualCardTxs,
+            periodStartEpochDay = firstTx?.billingPeriodStartEpochDay,
+            periodEndEpochDay = firstTx?.billingPeriodEndEpochDay
+        )
+    }
+
+    fun addStatementTransactionToManualLedger(
+        stmtTx: CardStatementTransactionEntity,
+        accountUid: String,
+        categoryUid: String? = null
+    ) {
+        viewModelScope.launch {
+            val acc = accounts.value.firstOrNull { it.account.uid == accountUid }?.account
+            val currencyUid = acc?.currencyUid ?: "curr_inr"
+            val tx = TransactionEntity(
+                uid = UUID.randomUUID().toString(),
+                type = if (stmtTx.isCredit) TransactionType.INCOME else TransactionType.EXPENSE,
+                accountAmount = stmtTx.amount,
+                baseAmount = stmtTx.amount,
+                currencyUid = currencyUid,
+                accountUid = accountUid,
+                categoryUid = categoryUid,
+                note = stmtTx.cleanNarration,
+                description = "Ref: ${stmtTx.referenceNumber ?: ""} (From Statement)",
+                timestamp = LocalDate.ofEpochDay(stmtTx.transactionDateEpochDay)
+                    .atStartOfDay(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+            )
+            repository.saveTransaction(tx)
+            _uiMessage.value = UiMessage.Success("Added to ledger: ${stmtTx.cleanNarration}")
         }
     }
 }

@@ -69,6 +69,8 @@ class FakeStatementDao : StatementDao {
                     statementYearMonth = first.statementYearMonth,
                     statementDateEpochDay = first.statementDateEpochDay,
                     paymentDueDateEpochDay = first.paymentDueDateEpochDay,
+                    billingPeriodStartEpochDay = first.billingPeriodStartEpochDay,
+                    billingPeriodEndEpochDay = first.billingPeriodEndEpochDay,
                     statementTotalDue = first.statementTotalDue,
                     statementMinDue = first.statementMinDue,
                     isReconciled = first.isReconciled,
@@ -86,6 +88,19 @@ class FakeStatementDao : StatementDao {
 
     override suspend fun hasStatementForMonth(cardMasked: String, yearMonth: String): Boolean {
         return transactionsMap.values.any { it.accountOrCardNumberMasked == cardMasked && it.statementYearMonth == yearMonth }
+    }
+
+    override suspend fun updateStatementPaidStatus(statementId: String, isPaid: Boolean) {
+        transactionsMap.values.filter { it.statementId == statementId }.forEach {
+            transactionsMap[it.uid] = it.copy(isReconciled = isPaid)
+        }
+        emitFlow()
+    }
+
+    override fun getRecentSpends(limit: Int): Flow<List<CardStatementTransactionEntity>> {
+        return _transactionsFlow.map { list ->
+            list.sortedByDescending { it.transactionDateEpochDay }.take(limit)
+        }
     }
 
     override suspend fun deleteStatementById(statementId: String) {

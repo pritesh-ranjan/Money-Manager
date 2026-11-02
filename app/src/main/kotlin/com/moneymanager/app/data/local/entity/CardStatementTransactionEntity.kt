@@ -74,6 +74,8 @@ data class CardStatementSummaryRecord(
     val statementYearMonth: String,
     val statementDateEpochDay: Long,
     val paymentDueDateEpochDay: Long?,
+    val billingPeriodStartEpochDay: Long? = null,
+    val billingPeriodEndEpochDay: Long? = null,
     val statementTotalDue: Double,
     val statementMinDue: Double?,
     val isReconciled: Boolean,

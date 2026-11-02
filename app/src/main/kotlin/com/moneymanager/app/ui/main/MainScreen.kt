@@ -220,7 +220,15 @@ fun MainScreen(
                     )
 
                     BottomTab.CREDIT_CARDS -> CreditCardsScreen(
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        onEditTransaction = { item ->
+                            editingTransaction = item
+                            initialSheetType = item.transaction.type
+                            showAddTransactionSheet = true
+                        },
+                        onOpenGmailImporter = {
+                            currentTab = BottomTab.MANAGE
+                        }
                     )
 
                     BottomTab.MANAGE -> ManageScreen(

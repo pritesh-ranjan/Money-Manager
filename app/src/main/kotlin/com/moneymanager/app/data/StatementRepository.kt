@@ -67,6 +67,14 @@ class StatementRepository(
         return statementDao.hasStatementForMonth(cardMasked, yearMonth)
     }
 
+    suspend fun setStatementPaidStatus(statementId: String, isPaid: Boolean) {
+        statementDao.updateStatementPaidStatus(statementId, isPaid)
+    }
+
+    fun getRecentSpends(limit: Int = 200): Flow<List<CardStatementTransactionEntity>> {
+        return statementDao.getRecentSpends(limit)
+    }
+
     suspend fun deleteStatement(statementId: String) {
         statementDao.deleteStatementById(statementId)
     }
