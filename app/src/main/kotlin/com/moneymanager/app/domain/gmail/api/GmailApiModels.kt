@@ -13,6 +13,11 @@ data class GmailHistoryResponse(
     val nextPageToken: String? = null
 )
 
+data class GmailMessagesListResponse(
+    val messageIds: List<String> = emptyList(),
+    val nextPageToken: String? = null
+)
+
 data class GmailHistoryRecord(
     val id: String,
     val messagesAdded: List<GmailMessageAdded> = emptyList()

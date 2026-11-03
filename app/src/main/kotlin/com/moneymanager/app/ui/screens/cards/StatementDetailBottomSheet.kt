@@ -46,6 +46,8 @@ fun StatementDetailBottomSheet(
     summary: CardStatementSummaryRecord,
     transactions: List<CardStatementTransactionEntity>,
     reconciliationReport: StatementReconciliationReport?,
+    mappedAccountName: String? = null,
+    onOpenCardMapping: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onPayBill: () -> Unit,
     onTogglePaid: (Boolean) -> Unit,
@@ -94,7 +96,7 @@ fun StatementDetailBottomSheet(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.85f),
+                .weight(1f, fill = false),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // 1. Header Card with Brand Emblem & Cycle Dates
@@ -135,10 +137,18 @@ fun StatementDetailBottomSheet(
                                 val stmtDateStr = LocalDate.ofEpochDay(summary.statementDateEpochDay).format(shortDateFormatter)
 
                                 Text(
-                                    text = "•• ${summary.accountOrCardNumberMasked.takeLast(4)} • Period: $periodStr",
+                                    text = "Card •• ${summary.accountOrCardNumberMasked.takeLast(4)}",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         color = OneUiTheme.colors.textSecondary,
-                                        fontSize = 12.sp
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 12.5.sp
+                                    )
+                                )
+                                Text(
+                                    text = "Period: $periodStr",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = OneUiTheme.colors.textSecondary,
+                                        fontSize = 11.5.sp
                                     )
                                 )
                                 Text(
@@ -164,6 +174,59 @@ fun StatementDetailBottomSheet(
                                     ),
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
+                            }
+                        }
+
+                        // Linked Credit Card Account Selector
+                        if (onOpenCardMapping != null) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onOpenCardMapping() },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (mappedAccountName != null) OneUiTheme.colors.surface else OneUiTheme.colors.warning.copy(alpha = 0.12f)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f, fill = false),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = if (mappedAccountName != null) Icons.Default.Link else Icons.Default.CreditCard,
+                                            contentDescription = null,
+                                            tint = if (mappedAccountName != null) OneUiTheme.colors.income else OneUiTheme.colors.warning,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text(
+                                                text = if (mappedAccountName != null) "Mapped to: $mappedAccountName" else "Not Mapped • Tap to link app card",
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (mappedAccountName != null) OneUiTheme.colors.textPrimary else OneUiTheme.colors.warning,
+                                                    fontSize = 12.sp
+                                                ),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = if (mappedAccountName != null) "Change" else "Link",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = OneUiTheme.colors.primaryAccent,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.5.sp
+                                        )
+                                    )
+                                }
                             }
                         }
 
@@ -253,7 +316,10 @@ fun StatementDetailBottomSheet(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(
                                         imageVector = if (hasDiscrepancy) Icons.Default.Warning else Icons.Default.CheckCircle,
                                         contentDescription = null,
@@ -266,9 +332,13 @@ fun StatementDetailBottomSheet(
                                         style = MaterialTheme.typography.bodyMedium.copy(
                                             fontWeight = FontWeight.Bold,
                                             color = if (hasDiscrepancy) OneUiTheme.colors.expense else OneUiTheme.colors.income
-                                        )
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
+
+                                Spacer(modifier = Modifier.width(8.dp))
 
                                 if (hasDiscrepancy && report.unrecordedStatementTransactions.isNotEmpty()) {
                                     Surface(
@@ -282,6 +352,8 @@ fun StatementDetailBottomSheet(
                                                 color = OneUiTheme.colors.expense,
                                                 fontWeight = FontWeight.Bold
                                             ),
+                                            maxLines = 1,
+                                            softWrap = false,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         )
                                     }

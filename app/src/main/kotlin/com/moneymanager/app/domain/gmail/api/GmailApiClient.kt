@@ -8,6 +8,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 class GmailHistoryNotFoundException(message: String) : IOException(message)
@@ -49,6 +50,56 @@ open class GmailApiClient(
                 messagesTotal = json.optLong("messagesTotal", 0L),
                 threadsTotal = json.optLong("threadsTotal", 0L),
                 historyId = json.getString("historyId")
+            )
+        }
+    }
+
+    /**
+     * Lists message IDs matching a search query (e.g. q="has:attachment filename:pdf after:2024/11/01")
+     */
+    open suspend fun listMessages(
+        accessToken: String,
+        query: String,
+        maxResults: Int = 100,
+        pageToken: String? = null
+    ): GmailMessagesListResponse = withContext(Dispatchers.IO) {
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val urlBuilder = StringBuilder("$BASE_URL/messages")
+            .append("?q=").append(encodedQuery)
+            .append("&maxResults=").append(maxResults)
+
+        if (!pageToken.isNullOrBlank()) {
+            urlBuilder.append("&pageToken=").append(pageToken)
+        }
+
+        val request = Request.Builder()
+            .url(urlBuilder.toString())
+            .header("Authorization", "Bearer $accessToken")
+            .get()
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("Gmail listMessages failed: HTTP ${response.code} $body")
+            }
+
+            val json = JSONObject(body)
+            val nextPageToken = json.optString("nextPageToken").takeIf { it.isNotBlank() }
+            val messagesArr = json.optJSONArray("messages") ?: JSONArray()
+            val messageIds = mutableListOf<String>()
+
+            for (i in 0 until messagesArr.length()) {
+                val item = messagesArr.getJSONObject(i)
+                val id = item.optString("id")
+                if (id.isNotBlank()) {
+                    messageIds.add(id)
+                }
+            }
+
+            GmailMessagesListResponse(
+                messageIds = messageIds,
+                nextPageToken = nextPageToken
             )
         }
     }

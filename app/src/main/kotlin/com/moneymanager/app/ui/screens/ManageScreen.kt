@@ -21,9 +21,12 @@ import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LocalOffer
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
@@ -58,7 +61,8 @@ enum class SettingsSubScreen {
     TAGS,
     BACKUP,
     INSIGHTS_CONFIG,
-    GMAIL_IMPORTER
+    GMAIL_IMPORTER,
+    PDF_PASSWORDS
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -284,7 +288,7 @@ fun ManageScreen(
                         }
                     }
 
-                    // 4. Group 3: Gmail Statement Importer (Zero-Cloud Automation)
+                    // 4. Group 3: Gmail Statement Importer & Passwords
                     item(key = "group_gmail_importer") {
                         OneUiCard(
                             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
@@ -1120,7 +1124,15 @@ fun ManageScreen(
         SettingsSubScreen.GMAIL_IMPORTER -> {
             com.moneymanager.app.ui.screens.gmail.GmailImporterScreen(
                 viewModel = viewModel,
-                onBack = { currentSubScreen = SettingsSubScreen.ROOT }
+                onBack = { currentSubScreen = SettingsSubScreen.ROOT },
+                onNavigateToPasswords = { currentSubScreen = SettingsSubScreen.PDF_PASSWORDS }
+            )
+        }
+
+        SettingsSubScreen.PDF_PASSWORDS -> {
+            PdfPasswordsScreen(
+                viewModel = viewModel,
+                onBack = { currentSubScreen = SettingsSubScreen.GMAIL_IMPORTER }
             )
         }
     }

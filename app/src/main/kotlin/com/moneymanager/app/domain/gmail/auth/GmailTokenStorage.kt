@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Base64
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.time.YearMonth
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -23,9 +24,15 @@ object GmailTokenStorage {
     private const val PREF_REFRESH_TOKEN_ENC = "pref_refresh_token_enc"
     private const val PREF_TOKEN_EXPIRES_AT = "pref_token_expires_at"
     private const val PREF_CONNECTED_EMAIL = "pref_connected_email"
-    private const val PREF_CLIENT_ID = "pref_client_id"
-    private const val PREF_CLIENT_SECRET = "pref_client_secret"
+    private const val PREF_CLIENT_ID_ENC = "pref_client_id_enc"
+    private const val PREF_CLIENT_SECRET_ENC = "pref_client_secret_enc"
     private const val PREF_PDF_PASSWORD_ENC = "pref_pdf_password_enc"
+    private const val PREF_PDF_PASSWORDS_JSON_ENC = "pref_pdf_passwords_json_enc"
+    private const val PREF_SYNC_SINCE_YEAR_MONTH = "pref_sync_since_year_month"
+
+    // Legacy unencrypted keys for seamless backward compatibility & migration
+    private const val LEGACY_PREF_CLIENT_ID = "pref_client_id"
+    private const val LEGACY_PREF_CLIENT_SECRET = "pref_client_secret"
 
     // Fallback key in memory/unit tests
     private var testSecretKey: SecretKey? = null
@@ -160,29 +167,172 @@ object GmailTokenStorage {
     }
 
     fun saveClientCredentials(context: Context, clientId: String?, clientSecret: String?) {
-        getPrefs(context).edit()
-            .putString(PREF_CLIENT_ID, clientId?.trim())
-            .putString(PREF_CLIENT_SECRET, clientSecret?.trim())
-            .apply()
+        val editor = getPrefs(context).edit()
+
+        if (clientId.isNullOrBlank()) {
+            editor.remove(PREF_CLIENT_ID_ENC)
+        } else {
+            editor.putString(PREF_CLIENT_ID_ENC, encrypt(clientId.trim()))
+        }
+        editor.remove(LEGACY_PREF_CLIENT_ID)
+
+        if (clientSecret.isNullOrBlank()) {
+            editor.remove(PREF_CLIENT_SECRET_ENC)
+        } else {
+            editor.putString(PREF_CLIENT_SECRET_ENC, encrypt(clientSecret.trim()))
+        }
+        editor.remove(LEGACY_PREF_CLIENT_SECRET)
+
+        editor.apply()
     }
 
     fun getClientId(context: Context): String? {
-        return getPrefs(context).getString(PREF_CLIENT_ID, null)
+        val prefs = getPrefs(context)
+        val enc = prefs.getString(PREF_CLIENT_ID_ENC, null)
+        if (!enc.isNullOrBlank()) {
+            val decrypted = decrypt(enc)
+            if (!decrypted.isNullOrBlank()) return decrypted
+        }
+        // Fallback to legacy unencrypted if present, and migrate to encrypted storage
+        val legacy = prefs.getString(LEGACY_PREF_CLIENT_ID, null)
+        if (!legacy.isNullOrBlank()) {
+            prefs.edit()
+                .putString(PREF_CLIENT_ID_ENC, encrypt(legacy.trim()))
+                .remove(LEGACY_PREF_CLIENT_ID)
+                .apply()
+            return legacy.trim()
+        }
+        return null
     }
 
     fun getClientSecret(context: Context): String? {
-        return getPrefs(context).getString(PREF_CLIENT_SECRET, null)
+        val prefs = getPrefs(context)
+        val enc = prefs.getString(PREF_CLIENT_SECRET_ENC, null)
+        if (!enc.isNullOrBlank()) {
+            val decrypted = decrypt(enc)
+            if (!decrypted.isNullOrBlank()) return decrypted
+        }
+        // Fallback to legacy unencrypted if present, and migrate to encrypted storage
+        val legacy = prefs.getString(LEGACY_PREF_CLIENT_SECRET, null)
+        if (!legacy.isNullOrBlank()) {
+            prefs.edit()
+                .putString(PREF_CLIENT_SECRET_ENC, encrypt(legacy.trim()))
+                .remove(LEGACY_PREF_CLIENT_SECRET)
+                .apply()
+            return legacy.trim()
+        }
+        return null
     }
 
-    fun saveDefaultPdfPassword(context: Context, password: String?) {
+    fun hasCustomCredentials(context: Context): Boolean {
+        return !getClientId(context).isNullOrBlank()
+    }
+
+    fun clearClientCredentials(context: Context) {
+        saveClientCredentials(context, null, null)
+    }
+
+    fun getPdfPasswords(context: Context): List<String> {
+        val prefs = getPrefs(context)
+        val enc = prefs.getString(PREF_PDF_PASSWORDS_JSON_ENC, null)
+        if (!enc.isNullOrBlank()) {
+            val decrypted = decrypt(enc)
+            if (!decrypted.isNullOrBlank()) {
+                // If it starts with '[', attempt parsing as JSON for backward compatibility with existing data
+                if (decrypted.trim().startsWith("[")) {
+                    try {
+                        val jsonArr = org.json.JSONArray(decrypted)
+                        val result = mutableListOf<String>()
+                        for (i in 0 until jsonArr.length()) {
+                            val item = jsonArr.optString(i)
+                            if (!item.isNullOrBlank() && !result.contains(item)) {
+                                result.add(item)
+                            }
+                        }
+                        if (result.isNotEmpty()) return result
+                    } catch (_: Exception) {
+                        // fallback to lines
+                    }
+                }
+                val list = decrypted.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+                if (list.isNotEmpty()) return list
+            }
+        }
+
+        // Backward compatibility migration from legacy single password
+        val legacyEnc = prefs.getString(PREF_PDF_PASSWORD_ENC, null)
+        if (!legacyEnc.isNullOrBlank()) {
+            val legacyPwd = decrypt(legacyEnc)
+            if (!legacyPwd.isNullOrBlank()) {
+                val list = listOf(legacyPwd.trim())
+                savePdfPasswords(context, list)
+                return list
+            }
+        }
+        return emptyList()
+    }
+
+    fun savePdfPasswords(context: Context, passwords: List<String>) {
+        val distinctPasswords = passwords.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        val serialized = distinctPasswords.joinToString("\n")
+        val encrypted = encrypt(serialized)
         getPrefs(context).edit()
-            .putString(PREF_PDF_PASSWORD_ENC, encrypt(password))
+            .putString(PREF_PDF_PASSWORDS_JSON_ENC, encrypted)
             .apply()
     }
 
+    fun addPdfPassword(context: Context, password: String): Boolean {
+        val clean = password.trim()
+        if (clean.isBlank()) return false
+        val current = getPdfPasswords(context).toMutableList()
+        if (!current.contains(clean)) {
+            current.add(clean)
+            savePdfPasswords(context, current)
+            return true
+        }
+        return false
+    }
+
+    fun removePdfPassword(context: Context, password: String): Boolean {
+        val clean = password.trim()
+        val current = getPdfPasswords(context).toMutableList()
+        val removed = current.remove(clean)
+        if (removed) {
+            savePdfPasswords(context, current)
+            return true
+        }
+        return false
+    }
+
+    fun saveDefaultPdfPassword(context: Context, password: String?) {
+        if (!password.isNullOrBlank()) {
+            addPdfPassword(context, password)
+        } else {
+            savePdfPasswords(context, emptyList())
+            getPrefs(context).edit().remove(PREF_PDF_PASSWORD_ENC).apply()
+        }
+    }
+
     fun getDefaultPdfPassword(context: Context): String? {
-        val enc = getPrefs(context).getString(PREF_PDF_PASSWORD_ENC, null)
-        return decrypt(enc)
+        return getPdfPasswords(context).firstOrNull()
+    }
+
+    /**
+     * Resolves the user-configured start month/year for syncing statements.
+     * Defaults to 3 months prior to current month.
+     */
+    fun getSyncSinceYearMonth(context: Context): YearMonth {
+        val raw = getPrefs(context).getString(PREF_SYNC_SINCE_YEAR_MONTH, null)
+        if (!raw.isNullOrBlank()) {
+            try {
+                return YearMonth.parse(raw)
+            } catch (_: Exception) {}
+        }
+        return YearMonth.now().minusMonths(3)
+    }
+
+    fun setSyncSinceYearMonth(context: Context, yearMonth: YearMonth) {
+        getPrefs(context).edit().putString(PREF_SYNC_SINCE_YEAR_MONTH, yearMonth.toString()).apply()
     }
 
     fun clearAll(context: Context) {

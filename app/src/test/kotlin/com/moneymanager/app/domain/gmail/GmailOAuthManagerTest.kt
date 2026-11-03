@@ -48,4 +48,41 @@ class GmailOAuthManagerTest {
         assertTrue("URL must contain strictly gmail.readonly scope", decoded.contains("scope=https://www.googleapis.com/auth/gmail.readonly"))
         assertTrue("URL must contain redirect_uri", decoded.contains("redirect_uri=com.moneymanager.app:/oauth2redirect"))
     }
+
+    @Test
+    fun testBuildAuthorizationUrlWithDynamicLoopbackUri() {
+        val verifier = manager.generateCodeVerifier()
+        val challenge = manager.generateCodeChallenge(verifier)
+        val state = "test_state_xyz"
+        val clientId = "desktop-client.apps.googleusercontent.com"
+        val loopbackUri = "http://127.0.0.1:49152"
+
+        val url = manager.buildAuthorizationUrl(
+            clientId = clientId,
+            state = state,
+            codeChallenge = challenge,
+            redirectUri = loopbackUri
+        )
+
+        val decoded = URLDecoder.decode(url, "UTF-8")
+        assertTrue("URL must contain dynamic loopback redirect URI", decoded.contains("redirect_uri=$loopbackUri"))
+    }
+
+    @Test
+    fun testGmailAuthConfigLoopbackUri() {
+        assertEquals("http://127.0.0.1:8080", GmailAuthConfig.buildLoopbackRedirectUri(8080))
+        assertEquals("http://127.0.0.1:54321", GmailAuthConfig.buildLoopbackRedirectUri(54321))
+    }
+
+    @Test
+    fun testBuildResponseHtmlSuccessAndError() {
+        val successHtml = manager.buildResponseHtml(isSuccess = true)
+        assertTrue(successHtml.contains("Connected to Money Manager"))
+        assertTrue(successHtml.contains("com.moneymanager.app:/oauth2redirect?status=done"))
+
+        val errorHtml = manager.buildResponseHtml(isSuccess = false, error = "access_denied")
+        assertTrue(errorHtml.contains("Authentication Failed"))
+        assertTrue(errorHtml.contains("access_denied"))
+        assertTrue(errorHtml.contains("com.moneymanager.app:/oauth2redirect?status=error"))
+    }
 }

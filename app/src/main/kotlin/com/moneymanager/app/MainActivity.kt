@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
         AppLockManager.init(this)
         com.moneymanager.app.ui.theme.ThemePreferenceManager.init(this)
         com.moneymanager.app.domain.insights.InsightPreferencesManager.init(this)
@@ -148,6 +149,10 @@ class MainActivity : ComponentActivity() {
     private fun handleOAuthRedirect(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "com.moneymanager.app" && data.host == "oauth2redirect") {
+            if (data.getQueryParameter("status") == "done") {
+                intent.data = null
+                return
+            }
             mainViewModel.handleGmailOAuthRedirect(data)
             intent.data = null
         }

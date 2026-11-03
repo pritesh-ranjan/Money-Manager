@@ -1,5 +1,8 @@
 package com.moneymanager.app.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,11 +23,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
@@ -32,9 +39,12 @@ import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.domain.CreditCardCycleSummary
 import com.moneymanager.app.domain.CurrencyFormatter
+import com.moneymanager.app.domain.cards.CreditCardMappingStorage
+import com.moneymanager.app.domain.gmail.auth.GmailTokenStorage
 import com.moneymanager.app.domain.statement.reconciliation.StatementReconciliationReport
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
+import com.moneymanager.app.ui.screens.cards.CardMappingDialog
 import com.moneymanager.app.ui.screens.cards.CreditCardBrandEmblem
 import com.moneymanager.app.ui.screens.cards.RewardsSummaryDialog
 import com.moneymanager.app.ui.screens.cards.StatementDetailBottomSheet
@@ -59,6 +69,7 @@ fun CreditCardsScreen(
     onOpenGmailImporter: (() -> Unit)? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(CredCardsTab.TOTAL_DUE) }
 
     val statementSummaries by viewModel.statementSummaries.collectAsState()
@@ -66,6 +77,33 @@ fun CreditCardsScreen(
     val manualCardSummaries by viewModel.creditCards.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
+
+    // Direct PDF Statement Importer State
+    var pendingPdfUri by remember { mutableStateOf<Uri?>(null) }
+    var showPasswordPrompt by remember { mutableStateOf(false) }
+    var passwordInput by remember { mutableStateOf("") }
+    var isPasswordInvalid by remember { mutableStateOf(false) }
+
+    val statementPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            pendingPdfUri = uri
+            viewModel.importStatementFromUri(
+                uri = uri,
+                password = null,
+                onPasswordRequired = { invalid ->
+                    isPasswordInvalid = invalid
+                    passwordInput = ""
+                    showPasswordPrompt = true
+                }
+            )
+        }
+    }
+
+    val cardMappings by viewModel.cardMappings.collectAsState()
+    var showCardMappingDialog by remember { mutableStateOf(false) }
+    var cardToMapPreselectedKey by remember { mutableStateOf<String?>(null) }
 
     // Dialog & Sheet States
     var showRewardsDialog by remember { mutableStateOf(false) }
@@ -88,7 +126,7 @@ fun CreditCardsScreen(
     // Cache reconciliation reports for statements to show red badges on cards
     var reconReportsMap by remember { mutableStateOf<Map<String, StatementReconciliationReport>>(emptyMap()) }
 
-    LaunchedEffect(statementSummaries, unbilledSpends) {
+    LaunchedEffect(statementSummaries, unbilledSpends, cardMappings) {
         val newMap = mutableMapOf<String, StatementReconciliationReport>()
         for (stmt in statementSummaries) {
             try {
@@ -97,6 +135,12 @@ fun CreditCardsScreen(
             } catch (_: Exception) {}
         }
         reconReportsMap = newMap
+
+        selectedStatementForDetail?.let { currentDetail ->
+            try {
+                statementReconReportForDetail = viewModel.getReconciliationReport(currentDetail)
+            } catch (_: Exception) {}
+        }
     }
 
     // Load transactions and report when a statement is selected
@@ -125,9 +169,14 @@ fun CreditCardsScreen(
 
     // Combine with manual cards that don't have imported statements
     val manualCardsWithoutStatements = manualCardSummaries.filter { manualCard ->
-        statementSummaries.none { stmt ->
+        val isMappedToStatement = statementSummaries.any { stmt ->
+            val mappedUid = CreditCardMappingStorage.getMappedAccountUid(context, stmt.bankId, stmt.accountOrCardNumberMasked)
+            mappedUid == manualCard.accountUid
+        }
+        !isMappedToStatement && statementSummaries.none { stmt ->
             stmt.accountOrCardNumberMasked.takeLast(4) == manualCard.cardName.takeLast(4) ||
-                stmt.bankName.contains(manualCard.cardName, ignoreCase = true)
+                stmt.bankName.contains(manualCard.cardName, ignoreCase = true) ||
+                manualCard.cardName.contains(stmt.bankName, ignoreCase = true)
         }
     }
     val totalManualDue = manualCardsWithoutStatements.sumOf { it.remainingStatementDue }
@@ -184,7 +233,34 @@ fun CreditCardsScreen(
         title = "Cards",
         subtitle = subtitleText,
         expandedHeight = 165.dp,
-        centeredExpandedTitle = true
+        centeredExpandedTitle = true,
+        actions = {
+            IconButton(
+                onClick = {
+                    cardToMapPreselectedKey = null
+                    showCardMappingDialog = true
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Link,
+                    contentDescription = "Map Synced Cards",
+                    tint = OneUiTheme.colors.textPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            IconButton(
+                onClick = { statementPdfLauncher.launch(arrayOf("application/pdf")) },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.UploadFile,
+                    contentDescription = "Import Statement PDF",
+                    tint = OneUiTheme.colors.textPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
     ) { contentPadding ->
         LazyColumn(
             modifier = Modifier
@@ -259,6 +335,66 @@ fun CreditCardsScreen(
                 }
             }
 
+            // Unmapped Synced Cards Alert Banner
+            val hasUnmappedCards = statementSummaries.any { stmt ->
+                CreditCardMappingStorage.getMappedAccountUid(context, stmt.bankId, stmt.accountOrCardNumberMasked) == null
+            }
+            if (hasUnmappedCards && statementSummaries.isNotEmpty()) {
+                item(key = "unmapped_cards_banner") {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(OneUiCardShape)
+                            .clickable {
+                                cardToMapPreselectedKey = null
+                                showCardMappingDialog = true
+                            },
+                        color = OneUiTheme.colors.warning.copy(alpha = 0.12f),
+                        shape = OneUiCardShape,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, OneUiTheme.colors.warning.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LinkOff,
+                                contentDescription = null,
+                                tint = OneUiTheme.colors.warning,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Unmapped Synced Cards",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = OneUiTheme.colors.textPrimary
+                                    )
+                                )
+                                Text(
+                                    text = "Link your statement cards to app accounts for accurate transaction reconciliation.",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = OneUiTheme.colors.textSecondary,
+                                        fontSize = 12.sp
+                                    )
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OneUiPillButton(
+                                text = "Map",
+                                onClick = {
+                                    cardToMapPreselectedKey = null
+                                    showCardMappingDialog = true
+                                },
+                                containerColor = OneUiTheme.colors.primaryAccent,
+                                contentColor = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
             // =========================================================================
             // 2. SUB-TAB SEGMENTED CONTROL (Total due | Recent spends)
             // =========================================================================
@@ -309,20 +445,26 @@ fun CreditCardsScreen(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        if (onOpenGmailImporter != null) {
-                                            OneUiPillButton(
-                                                text = "Gmail Importer",
-                                                onClick = { onOpenGmailImporter() },
-                                                containerColor = OneUiTheme.colors.primaryAccent,
-                                                contentColor = Color.White
-                                            )
-                                        }
+                                        OneUiPillButton(
+                                            text = "Import PDF",
+                                            onClick = { statementPdfLauncher.launch(arrayOf("application/pdf")) },
+                                            containerColor = OneUiTheme.colors.primaryAccent,
+                                            contentColor = Color.White
+                                        )
                                         OneUiPillButton(
                                             text = "Add Card",
                                             onClick = { showAddCardDialog = true },
                                             containerColor = OneUiTheme.colors.surfaceElevated,
                                             contentColor = OneUiTheme.colors.textPrimary
                                         )
+                                        if (onOpenGmailImporter != null) {
+                                            OneUiPillButton(
+                                                text = "Gmail Importer",
+                                                onClick = { onOpenGmailImporter() },
+                                                containerColor = OneUiTheme.colors.surfaceElevated,
+                                                contentColor = OneUiTheme.colors.textSecondary
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -737,10 +879,18 @@ fun CreditCardsScreen(
 
     // Statement Detail Bottom Sheet (shows PDF statement line items & RED discrepancies)
     selectedStatementForDetail?.let { stmt ->
+        val mappedUid = CreditCardMappingStorage.getMappedAccountUid(context, stmt.bankId, stmt.accountOrCardNumberMasked)
+        val mappedAcc = allAccounts.firstOrNull { it.account.uid == mappedUid }
+
         StatementDetailBottomSheet(
             summary = stmt,
             transactions = statementTransactionsForDetail,
             reconciliationReport = statementReconReportForDetail,
+            mappedAccountName = mappedAcc?.account?.name,
+            onOpenCardMapping = {
+                cardToMapPreselectedKey = CreditCardMappingStorage.buildCardKey(stmt.bankId, stmt.accountOrCardNumberMasked)
+                showCardMappingDialog = true
+            },
             onDismiss = { selectedStatementForDetail = null },
             onPayBill = {
                 cardToPayStatement = stmt
@@ -751,11 +901,13 @@ fun CreditCardsScreen(
                 selectedStatementForDetail = null
             },
             onAddTxToLedger = { stmtTx ->
-                val matchingAccount = allAccounts.firstOrNull {
-                    it.account.accountType == AccountType.CREDIT_CARD &&
-                        (it.account.name.contains(stmt.accountOrCardNumberMasked.takeLast(4)) ||
-                            it.account.name.contains(stmt.bankName, ignoreCase = true))
-                }?.account ?: allAccounts.firstOrNull { it.account.accountType == AccountType.CREDIT_CARD }?.account
+                val matchingAccount = (if (!mappedUid.isNullOrBlank()) allAccounts.firstOrNull { it.account.uid == mappedUid }?.account else null)
+                    ?: allAccounts.firstOrNull {
+                        it.account.accountType == AccountType.CREDIT_CARD &&
+                            (it.account.name.contains(stmt.accountOrCardNumberMasked.takeLast(4)) ||
+                                it.account.name.contains(stmt.bankName, ignoreCase = true))
+                    }?.account
+                    ?: allAccounts.firstOrNull { it.account.accountType == AccountType.CREDIT_CARD }?.account
 
                 if (matchingAccount != null) {
                     viewModel.addStatementTransactionToManualLedger(stmtTx, matchingAccount.uid)
@@ -898,6 +1050,99 @@ fun CreditCardsScreen(
             onDelete = { cardToDelete ->
                 viewModel.deleteAccount(cardToDelete)
                 cardToEdit = null
+            }
+        )
+    }
+
+    // Statement Password Prompt Dialog
+    if (showPasswordPrompt && pendingPdfUri != null) {
+        var passwordVisible by remember { mutableStateOf(false) }
+        Dialog(onDismissRequest = { showPasswordPrompt = false }) {
+            OneUiCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                contentPadding = PaddingValues(20.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "Statement PDF Password",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = OneUiTheme.colors.textPrimary
+                        )
+                    )
+                    Text(
+                        text = if (isPasswordInvalid) "The entered password was incorrect. Please enter the decryption password for this PDF."
+                        else "This statement PDF is password protected. Please enter the password to unlock and import it.",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = if (isPasswordInvalid) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary
+                        )
+                    )
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text("Password") },
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showPasswordPrompt = false }) {
+                            Text("Cancel", color = OneUiTheme.colors.textSecondary)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val uri = pendingPdfUri ?: return@Button
+                                val pwd = passwordInput
+                                showPasswordPrompt = false
+                                viewModel.importStatementFromUri(
+                                    uri = uri,
+                                    password = pwd,
+                                    onPasswordRequired = { invalid ->
+                                        isPasswordInvalid = invalid
+                                        showPasswordPrompt = true
+                                    }
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = OneUiTheme.colors.primaryAccent)
+                        ) {
+                            Text("Unlock & Import")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCardMappingDialog) {
+        CardMappingDialog(
+            viewModel = viewModel,
+            statements = statementSummaries,
+            allAccounts = allAccounts,
+            initialSelectedCardKey = cardToMapPreselectedKey,
+            onDismiss = {
+                showCardMappingDialog = false
+                cardToMapPreselectedKey = null
+            },
+            onAddNewCardAccount = {
+                showCardMappingDialog = false
+                cardToMapPreselectedKey = null
+                showAddCardDialog = true
             }
         )
     }

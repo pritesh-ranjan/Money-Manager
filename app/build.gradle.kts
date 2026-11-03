@@ -23,8 +23,8 @@ android {
     applicationId = "com.moneymanager.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 10
-    versionName = "2.0.1"
+    versionCode = 14
+    versionName = "2.0.5"
   }
 
   signingConfigs {
@@ -129,6 +129,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation("org.json:json:20240303")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)

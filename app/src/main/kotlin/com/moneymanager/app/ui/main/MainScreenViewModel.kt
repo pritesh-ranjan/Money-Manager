@@ -1,5 +1,6 @@
 package com.moneymanager.app.ui.main
 
+import android.app.Activity
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
@@ -37,8 +38,15 @@ import com.moneymanager.app.data.local.entity.GmailSyncStatus
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
+import com.moneymanager.app.domain.cards.CreditCardMappingStorage
+import com.moneymanager.app.domain.gmail.filter.GmailSyncRules
+import com.moneymanager.app.domain.gmail.filter.GmailSyncRulesStorage
+import com.moneymanager.app.domain.gmail.sync.PasswordUnlockOutcome
 import com.moneymanager.app.domain.statement.reconciliation.CardStatementReconciler
 import com.moneymanager.app.domain.statement.reconciliation.StatementReconciliationReport
+import com.moneymanager.app.domain.statement.core.StatementParserRegistry
+import com.moneymanager.app.domain.statement.core.StatementSecurityException
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -47,6 +55,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import com.moneymanager.app.domain.gmail.auth.GmailOAuthManager
 import com.moneymanager.app.domain.gmail.auth.GmailTokenStorage
+import com.moneymanager.app.domain.gmail.auth.GoogleOAuthCredentialsParser
 import com.moneymanager.app.domain.gmail.auth.OAuthResult
 import com.moneymanager.app.domain.gmail.sync.GmailSyncEngine
 import com.moneymanager.app.domain.gmail.sync.SyncOutcome
@@ -100,6 +109,156 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // UI Feedback Message
     private val _uiMessage = MutableStateFlow<UiMessage?>(null)
     val uiMessage: StateFlow<UiMessage?> = _uiMessage.asStateFlow()
+
+    // Statement PDF Passwords
+    private val _pdfPasswords = MutableStateFlow<List<String>>(emptyList())
+    val pdfPasswords: StateFlow<List<String>> = _pdfPasswords.asStateFlow()
+
+    // Google OAuth Custom Credentials Configured State (Boolean only - zero credentials exposed)
+    private val _hasCustomOAuthCredentials = MutableStateFlow<Boolean>(false)
+    val hasCustomOAuthCredentials: StateFlow<Boolean> = _hasCustomOAuthCredentials.asStateFlow()
+
+    // Sync Statements Since (Month-Year)
+    private val _syncSinceYearMonth = MutableStateFlow<YearMonth>(YearMonth.now().minusMonths(3))
+    val syncSinceYearMonth: StateFlow<YearMonth> = _syncSinceYearMonth.asStateFlow()
+
+    // Credit Card Mappings (card key -> account uid)
+    private val _cardMappings = MutableStateFlow<Map<String, String>>(emptyMap())
+    val cardMappings: StateFlow<Map<String, String>> = _cardMappings.asStateFlow()
+
+    // Gmail Sync Rules & Filters
+    private val _gmailSyncRules = MutableStateFlow<GmailSyncRules>(GmailSyncRules())
+    val gmailSyncRules: StateFlow<GmailSyncRules> = _gmailSyncRules.asStateFlow()
+
+    init {
+        loadPdfPasswords()
+        loadOAuthCredentialsState()
+        loadSyncSinceState()
+        loadCardMappings()
+        loadGmailSyncRules()
+    }
+
+    fun loadSyncSinceState() {
+        val context = getApplication<Application>()
+        _syncSinceYearMonth.value = GmailTokenStorage.getSyncSinceYearMonth(context)
+    }
+
+    fun updateSyncSinceYearMonth(yearMonth: YearMonth) {
+        val context = getApplication<Application>()
+        GmailTokenStorage.setSyncSinceYearMonth(context, yearMonth)
+        _syncSinceYearMonth.value = yearMonth
+        if (GmailTokenStorage.isConnected(context)) {
+            triggerManualGmailSync()
+        }
+    }
+
+    fun loadOAuthCredentialsState() {
+        val context = getApplication<Application>()
+        _hasCustomOAuthCredentials.value = GmailTokenStorage.hasCustomCredentials(context)
+    }
+
+    fun loadPdfPasswords() {
+        val context = getApplication<Application>()
+        _pdfPasswords.value = GmailTokenStorage.getPdfPasswords(context)
+    }
+
+    fun addPdfPassword(password: String) {
+        val clean = password.trim()
+        if (clean.isNotBlank()) {
+            val context = getApplication<Application>()
+            GmailTokenStorage.addPdfPassword(context, clean)
+            loadPdfPasswords()
+        }
+    }
+
+    fun removePdfPassword(password: String) {
+        val context = getApplication<Application>()
+        GmailTokenStorage.removePdfPassword(context, password)
+        loadPdfPasswords()
+    }
+
+    fun loadCardMappings() {
+        val context = getApplication<Application>()
+        _cardMappings.value = CreditCardMappingStorage.getAllMappings(context)
+    }
+
+    fun setCardMapping(bankId: String, cardMasked: String, accountUid: String) {
+        val context = getApplication<Application>()
+        CreditCardMappingStorage.saveCardMapping(context, bankId, cardMasked, accountUid)
+        loadCardMappings()
+        _uiMessage.value = UiMessage.Success("Card mapped successfully")
+    }
+
+    fun removeCardMapping(bankId: String, cardMasked: String) {
+        val context = getApplication<Application>()
+        CreditCardMappingStorage.removeCardMapping(context, bankId, cardMasked)
+        loadCardMappings()
+        _uiMessage.value = UiMessage.Success("Card mapping removed")
+    }
+
+    fun loadGmailSyncRules() {
+        val context = getApplication<Application>()
+        _gmailSyncRules.value = GmailSyncRulesStorage.getRules(context)
+    }
+
+    fun updateGmailSyncRules(rules: GmailSyncRules) {
+        val context = getApplication<Application>()
+        GmailSyncRulesStorage.saveRules(context, rules)
+        _gmailSyncRules.value = rules
+        _uiMessage.value = UiMessage.Success("Sync rules updated")
+    }
+
+    fun ignoreEmailSubjectAndCleanHistory(subjectKeyword: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val updated = GmailSyncRulesStorage.addIgnoredSubject(context, subjectKeyword)
+            _gmailSyncRules.value = updated
+
+            val history = gmailImportDao.getAllHistoryRaw()
+            val toDelete = history.filter {
+                it.subject.contains(subjectKeyword, ignoreCase = true) ||
+                    it.fileName.contains(subjectKeyword, ignoreCase = true)
+            }
+            for (del in toDelete) {
+                gmailImportDao.deleteByMessageId(del.messageId)
+                gmailSyncEngine.getPendingPdfFile(context, del.messageId).delete()
+            }
+            _uiMessage.value = UiMessage.Success("Added rule to ignore '${subjectKeyword}' and cleaned matching items")
+        }
+    }
+
+    fun deleteImportHistoryItem(messageId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            gmailImportDao.deleteByMessageId(messageId)
+            gmailSyncEngine.getPendingPdfFile(context, messageId).delete()
+            _uiMessage.value = UiMessage.Success("Statement removed from history")
+        }
+    }
+
+    fun unlockGmailHistoryStatement(
+        item: GmailImportHistoryEntity,
+        password: String,
+        onResult: (PasswordUnlockOutcome) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val outcome = gmailSyncEngine.unlockHistoryItemWithPassword(
+                context = context,
+                item = item,
+                password = password,
+                statementRepository = statementRepository,
+                importDao = gmailImportDao
+            )
+            withContext(Dispatchers.Main) {
+                if (outcome is PasswordUnlockOutcome.Success) {
+                    loadPdfPasswords()
+                    _uiMessage.value = UiMessage.Success(outcome.message)
+                }
+                onResult(outcome)
+            }
+        }
+    }
 
     val accounts: StateFlow<List<AccountWithCurrency>> = repository.accountsWithCurrency
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -504,7 +663,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Gmail Statement Importer Actions ---
 
+    fun startGmailOAuth(activity: Activity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isGmailSyncing.value = true
+            when (val result = gmailOAuthManager.startLoopbackOAuthFlow(activity)) {
+                is OAuthResult.Success -> {
+                    val email = gmailSyncEngine.connectAndInitializeBaseline(
+                        context = getApplication(),
+                        importDao = gmailImportDao,
+                        syncDao = gmailSyncDao
+                    )
+                    GmailWorkScheduler.schedulePeriodic(getApplication())
+                    _uiMessage.value = UiMessage.Success("Connected to Gmail: ${email ?: "Account linked"}")
+                }
+                is OAuthResult.Error -> {
+                    _uiMessage.value = UiMessage.Error("Connection failed: ${result.message}")
+                }
+            }
+            _isGmailSyncing.value = false
+        }
+    }
+
     fun handleGmailOAuthRedirect(uri: Uri) {
+        if (uri.getQueryParameter("status") == "done") {
+            // Returned from loopback browser confirmation
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             _isGmailSyncing.value = true
             when (val result = gmailOAuthManager.handleRedirectUri(getApplication(), uri)) {
@@ -574,14 +758,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             GmailTokenStorage.saveDefaultPdfPassword(getApplication(), password)
             gmailSyncDao.setDefaultPdfPassword(password)
-            _uiMessage.value = UiMessage.Success("Default statement password saved")
+            loadPdfPasswords()
+            _uiMessage.value = UiMessage.Success("Statement password saved")
         }
     }
 
     fun saveCustomOAuthCredentials(clientId: String?, clientSecret: String?) {
         viewModelScope.launch(Dispatchers.IO) {
             GmailTokenStorage.saveClientCredentials(getApplication(), clientId, clientSecret)
-            _uiMessage.value = UiMessage.Success("OAuth credentials updated")
+            loadOAuthCredentialsState()
+            _uiMessage.value = UiMessage.Success("OAuth credentials updated and encrypted")
+        }
+    }
+
+    fun clearCustomOAuthCredentials() {
+        viewModelScope.launch(Dispatchers.IO) {
+            GmailTokenStorage.clearClientCredentials(getApplication())
+            loadOAuthCredentialsState()
+            _uiMessage.value = UiMessage.Success("OAuth credentials removed")
+        }
+    }
+
+    fun importOAuthCredentialsFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val content = getApplication<Application>().contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } ?: throw IllegalArgumentException("Could not read credentials file from storage.")
+
+                val parsed = GoogleOAuthCredentialsParser.parse(content)
+                GmailTokenStorage.saveClientCredentials(getApplication(), parsed.clientId, parsed.clientSecret)
+                loadOAuthCredentialsState()
+                _uiMessage.value = UiMessage.Success("Google OAuth credentials imported and encrypted successfully")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to import credentials: ${e.message}")
+            }
         }
     }
 
@@ -609,11 +820,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         amount: Double
     ) {
         viewModelScope.launch {
-            val toAccount = accounts.value.firstOrNull {
-                it.account.accountType == AccountType.CREDIT_CARD &&
-                    (it.account.name.contains(summary.accountOrCardNumberMasked.takeLast(4)) ||
-                        it.account.name.contains(summary.bankName, ignoreCase = true))
-            }?.account
+            val context = getApplication<Application>()
+            val mappedAccountUid = CreditCardMappingStorage.getMappedAccountUid(
+                context,
+                summary.bankId,
+                summary.accountOrCardNumberMasked
+            )
+            val toAccount = if (!mappedAccountUid.isNullOrBlank()) {
+                accounts.value.firstOrNull { it.account.uid == mappedAccountUid }?.account
+            } else {
+                accounts.value.firstOrNull {
+                    it.account.accountType == AccountType.CREDIT_CARD &&
+                        (it.account.name.contains(summary.accountOrCardNumberMasked.takeLast(4)) ||
+                            summary.bankName.contains(it.account.name, ignoreCase = true) ||
+                            it.account.name.contains(summary.bankName, ignoreCase = true))
+                }?.account
+            }
 
             if (toAccount != null) {
                 val paymentTx = TransactionEntity(
@@ -653,20 +875,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun getReconciliationReport(summary: CardStatementSummaryRecord): StatementReconciliationReport {
+        val context = getApplication<Application>()
         val stmtTxs = statementRepository.getTransactionsByStatementIdRaw(summary.statementId)
-        val manualCardTxs = allTransactionsUnfiltered.value.filter {
-            it.account.accountType == AccountType.CREDIT_CARD &&
-                (it.account.name.contains(summary.accountOrCardNumberMasked.takeLast(4)) ||
-                    it.account.name.contains(summary.bankName, ignoreCase = true))
+        val mappedAccountUid = CreditCardMappingStorage.getMappedAccountUid(
+            context,
+            summary.bankId,
+            summary.accountOrCardNumberMasked
+        )
+
+        val manualCardTxs = if (!mappedAccountUid.isNullOrBlank()) {
+            allTransactionsUnfiltered.value.filter { it.account.uid == mappedAccountUid }
+        } else {
+            val last4 = summary.accountOrCardNumberMasked.replace("[^0-9]".toRegex(), "").takeLast(4)
+            val bankLower = summary.bankName.lowercase()
+            allTransactionsUnfiltered.value.filter {
+                it.account.accountType == AccountType.CREDIT_CARD && (
+                    (last4.isNotEmpty() && it.account.name.contains(last4)) ||
+                    summary.bankName.contains(it.account.name, ignoreCase = true) ||
+                    it.account.name.contains(summary.bankName, ignoreCase = true) ||
+                    (bankLower.contains("hdfc") && it.account.name.contains("hdfc", ignoreCase = true)) ||
+                    (bankLower.contains("icici") && it.account.name.contains("icici", ignoreCase = true)) ||
+                    (bankLower.contains("axis") && it.account.name.contains("axis", ignoreCase = true)) ||
+                    (bankLower.contains("baroda") && it.account.name.contains("baroda", ignoreCase = true)) ||
+                    (bankLower.contains("federal") && it.account.name.contains("federal", ignoreCase = true))
+                )
+            }
         }
+
         val firstTx = stmtTxs.firstOrNull()
+        val periodStart = summary.billingPeriodStartEpochDay ?: firstTx?.billingPeriodStartEpochDay ?: stmtTxs.minOfOrNull { it.transactionDateEpochDay }
+        val periodEnd = summary.billingPeriodEndEpochDay ?: firstTx?.billingPeriodEndEpochDay ?: stmtTxs.maxOfOrNull { it.transactionDateEpochDay }
+
         return CardStatementReconciler.reconcile(
             statementId = summary.statementId,
             cardMasked = summary.accountOrCardNumberMasked,
             statementTransactions = stmtTxs,
             manualTransactions = manualCardTxs,
-            periodStartEpochDay = firstTx?.billingPeriodStartEpochDay,
-            periodEndEpochDay = firstTx?.billingPeriodEndEpochDay
+            periodStartEpochDay = periodStart,
+            periodEndEpochDay = periodEnd
         )
     }
 
@@ -695,6 +941,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             repository.saveTransaction(tx)
             _uiMessage.value = UiMessage.Success("Added to ledger: ${stmtTx.cleanNarration}")
+        }
+    }
+
+    fun importStatementFromUri(
+        uri: Uri,
+        password: String? = null,
+        onPasswordRequired: (isInvalidPassword: Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val candidatePasswords = if (!password.isNullOrBlank()) {
+                listOf(password.trim())
+            } else {
+                GmailTokenStorage.getPdfPasswords(context)
+            }
+
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: run {
+                        _uiMessage.value = UiMessage.Error("Unable to open PDF statement file")
+                        return@launch
+                    }
+
+                val multiResult = StatementParserRegistry().parseWithPasswords(bytes.inputStream(), candidatePasswords)
+                val parseResult = multiResult.result
+
+                // If a password unlocked it, automatically persist it into the saved passwords list
+                if (!multiResult.workingPassword.isNullOrBlank()) {
+                    addPdfPassword(multiResult.workingPassword)
+                }
+
+                val statementId = statementRepository.importStatement(parseResult)
+                if (statementId.isNotBlank()) {
+                    _uiMessage.value = UiMessage.Success("Imported ${parseResult.metadata.bankName} statement (${parseResult.transactions.size} transactions)")
+                } else {
+                    _uiMessage.value = UiMessage.Error("Failed to parse statement transactions")
+                }
+            } catch (_: StatementSecurityException.PasswordRequiredException) {
+                withContext(Dispatchers.Main) {
+                    onPasswordRequired(false)
+                }
+            } catch (_: StatementSecurityException.InvalidPasswordException) {
+                withContext(Dispatchers.Main) {
+                    onPasswordRequired(true)
+                }
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to import PDF statement: ${e.message}")
+            }
         }
     }
 }

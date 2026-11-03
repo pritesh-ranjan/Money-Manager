@@ -50,4 +50,50 @@ class StatementParserRegistry(
             ?: throw IllegalArgumentException("No matching bank statement parser found for this document.")
         return parser.parse(bytes.inputStream(), password)
     }
+
+    /**
+     * Sequentially attempts candidate passwords against an input stream.
+     * Tests null (unencrypted) first, then candidate passwords in order.
+     * Returns MultiPasswordParseResult on the first working password.
+     * If all fail, rethrows the last encountered StatementSecurityException.
+     */
+    fun parseWithPasswords(
+        inputStream: InputStream,
+        candidatePasswords: List<String>
+    ): MultiPasswordParseResult {
+        val bytes = inputStream.readBytes()
+        val distinctCandidates = candidatePasswords.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+        if (distinctCandidates.isEmpty()) {
+            val res = parse(bytes.inputStream(), null)
+            return MultiPasswordParseResult(result = res, workingPassword = null)
+        }
+
+        var lastSecurityException: StatementSecurityException? = null
+        for (pwd in distinctCandidates) {
+            try {
+                val res = parse(bytes.inputStream(), pwd)
+                return MultiPasswordParseResult(result = res, workingPassword = pwd)
+            } catch (e: StatementSecurityException.InvalidPasswordException) {
+                lastSecurityException = e
+            } catch (e: StatementSecurityException.PasswordRequiredException) {
+                lastSecurityException = e
+            }
+        }
+
+        // Try unencrypted fallback in case candidates failed on an unencrypted document
+        try {
+            val res = parse(bytes.inputStream(), null)
+            return MultiPasswordParseResult(result = res, workingPassword = null)
+        } catch (_: Exception) {
+            // Document required a valid password
+        }
+
+        throw (lastSecurityException ?: StatementSecurityException.InvalidPasswordException())
+    }
 }
+
+data class MultiPasswordParseResult(
+    val result: StatementParseResult,
+    val workingPassword: String?
+)

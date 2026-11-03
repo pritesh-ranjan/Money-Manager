@@ -15,6 +15,9 @@ object GmailAuthConfig {
     const val GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
     const val REDIRECT_URI = "com.moneymanager.app:/oauth2redirect"
+    const val LOOPBACK_REDIRECT_HOST = "127.0.0.1"
+
+    fun buildLoopbackRedirectUri(port: Int): String = "http://$LOOPBACK_REDIRECT_HOST:$port"
 
     // Default placeholders - user can configure via in-app UI or properties
     const val DEFAULT_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"

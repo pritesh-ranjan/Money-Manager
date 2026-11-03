@@ -144,6 +144,15 @@ class GmailSyncEngineTest {
 
         var getMessageCallCount = 0
         val fakeApiClient = object : GmailApiClient() {
+            override suspend fun listMessages(
+                accessToken: String,
+                query: String,
+                maxResults: Int,
+                pageToken: String?
+            ): GmailMessagesListResponse {
+                return GmailMessagesListResponse(messageIds = emptyList())
+            }
+
             override suspend fun listHistory(
                 accessToken: String,
                 startHistoryId: String,
@@ -186,6 +195,15 @@ class GmailSyncEngineTest {
         fakeSyncDao.updateSyncProgress("ancient_history_id", System.currentTimeMillis(), GmailSyncStatus.SUCCESS.name)
 
         val fakeApiClient = object : GmailApiClient() {
+            override suspend fun listMessages(
+                accessToken: String,
+                query: String,
+                maxResults: Int,
+                pageToken: String?
+            ): GmailMessagesListResponse {
+                return GmailMessagesListResponse(messageIds = emptyList())
+            }
+
             override suspend fun listHistory(
                 accessToken: String,
                 startHistoryId: String,
@@ -214,5 +232,65 @@ class GmailSyncEngineTest {
         val outcome = engine.syncIncremental(context, fakeImportDao, fakeSyncDao, statementRepo)
         assertTrue(outcome is SyncOutcome.Success)
         assertEquals("new_baseline_history_id", fakeSyncDao.getSyncStateRaw()?.lastHistoryId)
+    }
+
+    @Test
+    fun testIncrementalSync_queriesMessagesSinceSelectedMonth() = runTest {
+        var searchedQuery: String? = null
+        val fakeApiClient = object : GmailApiClient() {
+            override suspend fun listMessages(
+                accessToken: String,
+                query: String,
+                maxResults: Int,
+                pageToken: String?
+            ): GmailMessagesListResponse {
+                searchedQuery = query
+                return GmailMessagesListResponse(
+                    messageIds = listOf("new_stmt_msg_1")
+                )
+            }
+
+            override suspend fun listHistory(
+                accessToken: String,
+                startHistoryId: String,
+                maxResults: Int,
+                pageToken: String?
+            ): GmailHistoryResponse {
+                return GmailHistoryResponse(history = emptyList(), historyId = "200")
+            }
+
+            override suspend fun getMessage(accessToken: String, messageId: String): GmailMessageDetail {
+                return GmailMessageDetail(
+                    id = messageId,
+                    threadId = "t1",
+                    internalDate = 1000L,
+                    headers = listOf(
+                        GmailHeader("From", "statements@icicibank.com"),
+                        GmailHeader("Subject", "Credit Card Statement")
+                    ),
+                    attachments = listOf(
+                        GmailAttachmentRef("att_1", "statement.pdf", "application/pdf", 1024L)
+                    )
+                )
+            }
+
+            override suspend fun getAttachment(accessToken: String, messageId: String, attachmentId: String): ByteArray {
+                return "%PDF-1.4 empty fake pdf".toByteArray()
+            }
+        }
+
+        fakeSyncDao.updateSyncProgress("100", System.currentTimeMillis(), GmailSyncStatus.SUCCESS.name)
+
+        val engine = GmailSyncEngine(
+            apiClient = fakeApiClient,
+            oauthManager = fakeOAuthManager,
+            parserRegistry = StatementParserRegistry()
+        )
+
+        val outcome = engine.syncIncremental(context, fakeImportDao, fakeSyncDao, statementRepo)
+        assertTrue(outcome is SyncOutcome.Success)
+        assertNotNull(searchedQuery)
+        assertTrue("Search query must filter by after date", searchedQuery!!.contains("after:"))
+        assertTrue("Search query must filter by pdf attachment", searchedQuery!!.contains("filename:pdf"))
     }
 }
