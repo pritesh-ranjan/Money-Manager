@@ -199,12 +199,15 @@ class GmailSyncEngine(
                     continue
                 }
 
-                // 3. Bank filtering: Only process enabled/supported banks
-                val bank = BankFilterEngine.matchBank(sender, subject, syncRules)
-                if (bank == null) {
+                // 3. Bank filtering: Only process enabled/supported banks or configured custom banks
+                val builtInBank = BankFilterEngine.matchBank(sender, subject, syncRules)
+                val customBankName = if (builtInBank == null) BankFilterEngine.matchCustomBank(sender, subject, syncRules) else null
+
+                if (builtInBank == null && customBankName == null) {
                     // Non-bank or disabled bank: skip completely
                     continue
                 }
+                val bankDisplayName = builtInBank?.displayName ?: customBankName ?: "Bank"
 
                 // 4. Attachment validation: accept only PDF attachments
                 val pdfAttachments = AttachmentValidator.filterPdfAttachments(messageDetail.attachments)
@@ -251,7 +254,7 @@ class GmailSyncEngine(
                                     sender = sender,
                                     subject = subject,
                                     receivedEpochMillis = messageDetail.internalDate,
-                                    bankName = bank.displayName,
+                                    bankName = bankDisplayName,
                                     fileName = attRef.filename,
                                     importStatus = GmailImportStatus.SUCCESS.name,
                                     statementId = statementId
@@ -265,7 +268,7 @@ class GmailSyncEngine(
                                     sender = sender,
                                     subject = subject,
                                     receivedEpochMillis = messageDetail.internalDate,
-                                    bankName = bank.displayName,
+                                    bankName = bankDisplayName,
                                     fileName = attRef.filename,
                                     importStatus = GmailImportStatus.PASSWORD_REQUIRED.name,
                                     errorMessage = "Statement is password protected."
@@ -279,7 +282,7 @@ class GmailSyncEngine(
                                     sender = sender,
                                     subject = subject,
                                     receivedEpochMillis = messageDetail.internalDate,
-                                    bankName = bank.displayName,
+                                    bankName = bankDisplayName,
                                     fileName = attRef.filename,
                                     importStatus = GmailImportStatus.PASSWORD_REQUIRED.name,
                                     errorMessage = "Provided statement password was incorrect."
@@ -293,10 +296,10 @@ class GmailSyncEngine(
                                     sender = sender,
                                     subject = subject,
                                     receivedEpochMillis = messageDetail.internalDate,
-                                    bankName = bank.displayName,
+                                    bankName = bankDisplayName,
                                     fileName = attRef.filename,
                                     importStatus = GmailImportStatus.NO_PARSER_MATCH.name,
-                                    errorMessage = e.message ?: "No matching parser found for ${bank.displayName}."
+                                    errorMessage = e.message ?: "No matching parser found for $bankDisplayName."
                                 )
                             )
                         } catch (e: Exception) {
@@ -306,7 +309,7 @@ class GmailSyncEngine(
                                     sender = sender,
                                     subject = subject,
                                     receivedEpochMillis = messageDetail.internalDate,
-                                    bankName = bank.displayName,
+                                    bankName = bankDisplayName,
                                     fileName = attRef.filename,
                                     importStatus = GmailImportStatus.PARSE_FAILED.name,
                                     errorMessage = e.message ?: "Failed to parse PDF statement."

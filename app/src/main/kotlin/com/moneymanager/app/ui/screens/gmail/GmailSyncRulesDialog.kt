@@ -34,19 +34,13 @@ fun GmailSyncRulesDialog(
 ) {
     var searchQuery by remember { mutableStateOf(initialRules.baseSearchQuery) }
     var enabledBanks by remember { mutableStateOf(initialRules.enabledBanks.toSet()) }
+    var customBanks by remember { mutableStateOf(initialRules.customBankKeywords.toMutableList()) }
     var enabledCardParsers by remember { mutableStateOf(initialRules.enabledCardParserIds.toSet()) }
     var ignoredSubjects by remember { mutableStateOf(initialRules.ignoredSubjectKeywords.toMutableList()) }
+    var newBankInput by remember { mutableStateOf("") }
     var newIgnoreKeywordInput by remember { mutableStateOf("") }
 
-    val bankDisplayNames = remember {
-        mapOf(
-            SupportedBank.HDFC.name to "HDFC Bank",
-            SupportedBank.ICICI.name to "ICICI Bank",
-            SupportedBank.AXIS.name to "Axis Bank",
-            SupportedBank.BANK_OF_BARODA.name to "Bank of Baroda",
-            SupportedBank.FEDERAL_BANK.name to "Federal Bank"
-        )
-    }
+    val builtInBanks = remember { SupportedBank.entries }
 
     val cardParserDisplayNames = remember {
         mapOf(
@@ -64,6 +58,7 @@ fun GmailSyncRulesDialog(
             val updated = initialRules.copy(
                 baseSearchQuery = searchQuery.trim().ifBlank { GmailSyncRules.DEFAULT_SEARCH_QUERY },
                 enabledBanks = enabledBanks,
+                customBankKeywords = customBanks.map { it.trim() }.filter { it.isNotBlank() }.distinct(),
                 enabledCardParserIds = enabledCardParsers,
                 ignoredSubjectKeywords = ignoredSubjects.map { it.trim() }.filter { it.isNotBlank() }.distinct()
             )
@@ -134,23 +129,98 @@ fun GmailSyncRulesDialog(
                 }
             }
 
-            // 2. Supported Banks Toggles
+            // 2. Supported Banks & Custom Banks
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Supported Banks (${enabledBanks.size + customBanks.size}/${builtInBanks.size + customBanks.size})",
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = OneUiTheme.colors.textPrimary
+                            )
+                        )
+                        TextButton(
+                            onClick = {
+                                enabledBanks = if (enabledBanks.size == builtInBanks.size) {
+                                    emptySet()
+                                } else {
+                                    builtInBanks.map { it.name }.toSet()
+                                }
+                            },
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(
+                                text = if (enabledBanks.size == builtInBanks.size) "Deselect All" else "Select All",
+                                fontSize = 12.sp,
+                                color = OneUiTheme.colors.primaryAccent
+                            )
+                        }
+                    }
+
                     Text(
-                        text = "Supported Banks (${enabledBanks.size}/${bankDisplayNames.size})",
-                        style = MaterialTheme.typography.titleSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = OneUiTheme.colors.textPrimary
+                        text = "Enable or disable banks to scan for statements, or add more banks below.",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = OneUiTheme.colors.textSecondary,
+                            fontSize = 11.5.sp
                         )
                     )
+
+                    // Add new bank input
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = newBankInput,
+                            onValueChange = { newBankInput = it },
+                            placeholder = { Text("Add bank (e.g. DBS Bank, Jupiter...)") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(14.dp),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = OneUiTheme.colors.primaryAccent,
+                                unfocusedBorderColor = OneUiTheme.colors.surfaceElevated,
+                                focusedContainerColor = OneUiTheme.colors.surfaceElevated,
+                                unfocusedContainerColor = OneUiTheme.colors.surfaceElevated,
+                                focusedTextColor = OneUiTheme.colors.textPrimary,
+                                unfocusedTextColor = OneUiTheme.colors.textPrimary
+                            )
+                        )
+                        OneUiPillButton(
+                            text = "Add Bank",
+                            onClick = {
+                                val clean = newBankInput.trim()
+                                if (clean.isNotBlank()) {
+                                    val matchedBuiltIn = builtInBanks.find {
+                                        it.displayName.equals(clean, ignoreCase = true) ||
+                                                it.name.equals(clean, ignoreCase = true) ||
+                                                it.displayName.contains(clean, ignoreCase = true)
+                                    }
+                                    if (matchedBuiltIn != null) {
+                                        enabledBanks = enabledBanks + matchedBuiltIn.name
+                                    } else if (!customBanks.any { it.equals(clean, ignoreCase = true) }) {
+                                        customBanks.add(clean)
+                                    }
+                                    newBankInput = ""
+                                }
+                            },
+                            containerColor = OneUiTheme.colors.primaryAccent,
+                            contentColor = Color.White
+                        )
+                    }
 
                     OneUiCard(
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                     ) {
                         Column {
-                            bankDisplayNames.entries.forEachIndexed { index, (bankKey, bankName) ->
-                                val isChecked = enabledBanks.contains(bankKey)
+                            builtInBanks.forEachIndexed { index, bank ->
+                                val isChecked = enabledBanks.contains(bank.name)
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -159,7 +229,7 @@ fun GmailSyncRulesDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = bankName,
+                                        text = bank.displayName,
                                         style = MaterialTheme.typography.bodyMedium.copy(
                                             color = OneUiTheme.colors.textPrimary,
                                             fontWeight = FontWeight.Medium
@@ -169,14 +239,65 @@ fun GmailSyncRulesDialog(
                                         checked = isChecked,
                                         onCheckedChange = { checked ->
                                             enabledBanks = if (checked) {
-                                                enabledBanks + bankKey
+                                                enabledBanks + bank.name
                                             } else {
-                                                enabledBanks - bankKey
+                                                enabledBanks - bank.name
                                             }
                                         }
                                     )
                                 }
-                                if (index < bankDisplayNames.size - 1) {
+                                if (index < builtInBanks.size - 1 || customBanks.isNotEmpty()) {
+                                    OneUiInsetDivider(startIndent = 0.dp)
+                                }
+                            }
+
+                            // User-added custom banks
+                            customBanks.forEachIndexed { cIndex, customBankName ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = customBankName,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                color = OneUiTheme.colors.textPrimary,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = OneUiTheme.colors.primaryAccent.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "Custom",
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                fontSize = 10.sp,
+                                                color = OneUiTheme.colors.primaryAccent,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { customBanks.remove(customBankName) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Remove custom bank",
+                                            tint = OneUiTheme.colors.textSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                if (cIndex < customBanks.size - 1) {
                                     OneUiInsetDivider(startIndent = 0.dp)
                                 }
                             }

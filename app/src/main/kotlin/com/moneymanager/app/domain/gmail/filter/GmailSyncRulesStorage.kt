@@ -109,6 +109,28 @@ object GmailSyncRulesStorage {
             .apply()
     }
 
+    fun addCustomBank(context: Context, bankName: String): GmailSyncRules {
+        val clean = bankName.trim()
+        val current = getRules(context)
+        if (clean.isBlank() || current.customBankKeywords.any { it.equals(clean, ignoreCase = true) }) {
+            return current
+        }
+        val updated = current.copy(
+            customBankKeywords = current.customBankKeywords + clean
+        )
+        saveRules(context, updated)
+        return updated
+    }
+
+    fun removeCustomBank(context: Context, bankName: String): GmailSyncRules {
+        val current = getRules(context)
+        val updated = current.copy(
+            customBankKeywords = current.customBankKeywords.filterNot { it.equals(bankName.trim(), ignoreCase = true) }
+        )
+        saveRules(context, updated)
+        return updated
+    }
+
     fun addIgnoredSubject(context: Context, keyword: String): GmailSyncRules {
         val clean = keyword.trim()
         val current = getRules(context)

@@ -123,7 +123,7 @@ fun GmailImporterScreen(
             item {
                 OneUiBannerCard(
                     title = "Automated On-Device Importer",
-                    subtitle = "Securely imports PDF bank statements from ICICI, Axis, HDFC, Bank of Baroda & Federal Bank directly on-device. No cloud intermediary."
+                    subtitle = "Securely imports PDF bank and credit card statements directly on-device. No cloud intermediary."
                 )
             }
 
@@ -402,7 +402,7 @@ fun GmailImporterScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "New monthly statement PDFs from ICICI, Axis, HDFC, BOB or Federal Bank will appear here automatically.",
+                                text = "New monthly statement PDFs from supported or configured banks will appear here automatically.",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = OneUiTheme.colors.textMuted,
                                     fontSize = 12.sp

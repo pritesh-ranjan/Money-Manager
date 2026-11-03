@@ -84,6 +84,48 @@ class BankFilterEngineTest {
     }
 
     @Test
+    fun testAdditionalSupportedBanksMatching() {
+        // SBI
+        assertEquals(
+            SupportedBank.SBI,
+            BankFilterEngine.matchBank("statements@sbicard.com", "Your SBI Card Statement")
+        )
+        // Kotak
+        assertEquals(
+            SupportedBank.KOTAK,
+            BankFilterEngine.matchBank("alerts@kotak.com", "Your Kotak Mahindra Bank e-Statement")
+        )
+        // IDFC
+        assertEquals(
+            SupportedBank.IDFC,
+            BankFilterEngine.matchBank("statements@idfcfirstbank.com", "Monthly Account Statement")
+        )
+        // OneCard
+        assertEquals(
+            SupportedBank.ONE_CARD,
+            BankFilterEngine.matchBank("statements@getonecard.app", "Your OneCard Statement")
+        )
+    }
+
+    @Test
+    fun testCustomBankMatching() {
+        val rules = com.moneymanager.app.domain.gmail.filter.GmailSyncRules(
+            customBankKeywords = listOf("DBS Bank", "Jupiter")
+        )
+        assertEquals(
+            "DBS Bank",
+            BankFilterEngine.matchCustomBank("statements@dbs.com", "Your e-Statement is ready", rules)
+        )
+        assertEquals(
+            "Jupiter",
+            BankFilterEngine.matchCustomBank("alerts@jupiter.money", "Jupiter Monthly Statement", rules)
+        )
+        assertNull(
+            BankFilterEngine.matchCustomBank("promo@unknown.com", "Special offer", rules)
+        )
+    }
+
+    @Test
     fun testIsLikelyStatement() {
         assertTrue(BankFilterEngine.isLikelyStatement("Your Monthly e-Statement for October 2026"))
         assertTrue(BankFilterEngine.isLikelyStatement("Axis Bank Credit Card Statement"))
