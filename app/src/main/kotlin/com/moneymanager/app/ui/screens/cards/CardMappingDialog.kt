@@ -247,167 +247,31 @@ fun CardMappingDialog(
 
     // Account Picker Sheet when a card is selected
     cardToPickAccountFor?.let { targetCard ->
-        OneUiBottomDialog(
+        val cleanDigits = targetCard.cardMasked.replace("[^0-9]".toRegex(), "")
+        val last4Text = if (cleanDigits.length >= 4) "•• ${cleanDigits.takeLast(4)}" else targetCard.cardMasked
+
+        OneUiAccountSelectionDialog(
+            title = "Map ${targetCard.bankName} Card ($last4Text)",
+            accounts = allAccounts,
+            selectedUid = targetCard.mappedAccountUid ?: "",
+            typeColor = OneUiTheme.colors.primaryAccent,
+            initialFilter = "Cards",
+            allowedAccountTypes = setOf(AccountType.CREDIT_CARD),
+            allowNoneOption = true,
+            noneOptionLabel = "None (Auto-match by name)",
             onDismissRequest = { cardToPickAccountFor = null },
-            title = "Map ${targetCard.bankName} Card",
-            confirmButtonText = "Done",
-            onConfirm = { cardToPickAccountFor = null },
-            dismissButtonText = "Cancel"
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = false),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                val cleanDigits = targetCard.cardMasked.replace("[^0-9]".toRegex(), "")
-                val last4Text = if (cleanDigits.length >= 4) "•• ${cleanDigits.takeLast(4)}" else targetCard.cardMasked
-
-                Text(
-                    text = "Select which app credit card account matches this statement card ($last4Text):",
-                    style = MaterialTheme.typography.bodySmall.copy(color = OneUiTheme.colors.textSecondary)
-                )
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Option 1: Unlink / Auto-Detect
-                    item {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable {
-                                    viewModel.removeCardMapping(targetCard.bankId, targetCard.cardMasked)
-                                    cardToPickAccountFor = null
-                                },
-                            color = OneUiTheme.colors.surfaceElevated,
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OneUiRadioButton(
-                                    selected = targetCard.mappedAccountUid.isNullOrBlank(),
-                                    onClick = {
-                                        viewModel.removeCardMapping(targetCard.bankId, targetCard.cardMasked)
-                                        cardToPickAccountFor = null
-                                    }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "None (Auto-match by name)",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = FontWeight.Medium,
-                                            color = OneUiTheme.colors.textPrimary
-                                        )
-                                    )
-                                    Text(
-                                        text = "Use default name/digits matching",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = OneUiTheme.colors.textSecondary,
-                                            fontSize = 11.5.sp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Existing Credit Card Accounts
-                    items(creditCardAccounts, key = { it.account.uid }) { acc ->
-                        val isSelected = targetCard.mappedAccountUid == acc.account.uid
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable {
-                                    viewModel.setCardMapping(targetCard.bankId, targetCard.cardMasked, acc.account.uid)
-                                    cardToPickAccountFor = null
-                                },
-                            color = if (isSelected) OneUiTheme.colors.primaryAccentContainer else OneUiTheme.colors.surfaceElevated,
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OneUiRadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        viewModel.setCardMapping(targetCard.bankId, targetCard.cardMasked, acc.account.uid)
-                                        cardToPickAccountFor = null
-                                    }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = acc.account.name,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = OneUiTheme.colors.textPrimary
-                                        )
-                                    )
-                                    val dueDay = acc.account.paymentDueDay?.let { "Due day: $it" } ?: "Credit Card"
-                                    Text(
-                                        text = dueDay,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = OneUiTheme.colors.textSecondary,
-                                            fontSize = 11.5.sp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Option: Create New Credit Card Account
-                    item {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable {
-                                    cardToPickAccountFor = null
-                                    onAddNewCardAccount()
-                                },
-                            color = OneUiTheme.colors.surfaceElevated,
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    tint = OneUiTheme.colors.primaryAccent,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "+ Add New Credit Card Account",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = OneUiTheme.colors.primaryAccent,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                )
-                            }
-                        }
-                    }
+            onSelect = { uid ->
+                if (uid.isBlank()) {
+                    viewModel.removeCardMapping(targetCard.bankId, targetCard.cardMasked)
+                } else {
+                    viewModel.setCardMapping(targetCard.bankId, targetCard.cardMasked, uid)
                 }
+                cardToPickAccountFor = null
+            },
+            onAddNewAccount = { defaultType ->
+                cardToPickAccountFor = null
+                onAddNewCardAccount()
             }
-        }
+        )
     }
 }
