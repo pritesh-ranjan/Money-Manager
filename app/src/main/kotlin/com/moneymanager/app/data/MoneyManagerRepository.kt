@@ -48,7 +48,12 @@ class MoneyManagerRepository(
     suspend fun saveCurrency(currency: CurrencyEntity) {
         val existing = dao.getAllCurrenciesRaw()
         DomainValidator.validateCurrency(currency, existing)
-        dao.insertCurrency(currency)
+        val isExisting = existing.any { it.uid == currency.uid }
+        if (isExisting) {
+            dao.updateCurrency(currency)
+        } else {
+            dao.insertCurrency(currency)
+        }
     }
 
     suspend fun deleteCurrency(currency: CurrencyEntity) {
@@ -75,7 +80,12 @@ class MoneyManagerRepository(
             )
         } else account
 
-        dao.insertAccount(sanitized)
+        val isExisting = existing.any { it.uid == sanitized.uid }
+        if (isExisting) {
+            dao.updateAccount(sanitized)
+        } else {
+            dao.insertAccount(sanitized)
+        }
     }
 
     suspend fun deleteAccount(account: AccountEntity): AccountDeleteOutcome {
@@ -102,7 +112,12 @@ class MoneyManagerRepository(
     suspend fun saveCategory(category: CategoryEntity) {
         val existing = dao.getAllCategoriesRaw()
         DomainValidator.validateCategory(category, existing)
-        dao.insertCategory(category)
+        val isExisting = existing.any { it.uid == category.uid }
+        if (isExisting) {
+            dao.updateCategory(category)
+        } else {
+            dao.insertCategory(category)
+        }
     }
 
     suspend fun deleteCategory(uid: String) {

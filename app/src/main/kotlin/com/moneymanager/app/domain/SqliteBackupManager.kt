@@ -89,7 +89,16 @@ object SqliteBackupManager {
     ): BackupRestoreResult = withContext(Dispatchers.IO) {
         val tempFile = File(context.cacheDir, "restore_${System.currentTimeMillis()}.sqlite")
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            val stream = try {
+                context.contentResolver.openInputStream(sourceUri)
+            } catch (_: Exception) {
+                null
+            } ?: if (sourceUri.scheme == "file" || sourceUri.scheme == null) {
+                val f = File(sourceUri.path ?: "")
+                if (f.exists()) FileInputStream(f) else null
+            } else null
+
+            stream?.use { input ->
                 FileOutputStream(tempFile).use { output ->
                     input.copyTo(output)
                 }
