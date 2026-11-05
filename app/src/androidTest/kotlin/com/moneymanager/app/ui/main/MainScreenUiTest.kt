@@ -119,18 +119,21 @@ class MainScreenUiTest {
         composeTestRule.onNodeWithText("HDFC Main Salary").assertIsDisplayed()
         composeTestRule.onNodeWithText("Total net worth").assertIsDisplayed()
 
-        // 7. Click on the created account to open Edit Account dialog
+        // 7. Click on the created account to open Account Detail sub-screen with quick edit
         composeTestRule.onNodeWithText("HDFC Main Salary").performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithText("Edit Account").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Quick account edit").assertIsDisplayed()
 
-        // 8. Edit name and update
+        // 8. Edit name in quick edit section and save
         composeTestRule.onNodeWithText("Account Name").performTextReplacement("HDFC Premium Salary")
-        composeTestRule.onNodeWithText("Update").performClick()
+        composeTestRule.onNodeWithText("Save Changes").performClick()
         composeTestRule.waitForIdle()
 
-        // 9. Verify updated name appears
+        // 9. Back to accounts list and verify updated name appears
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitForIdle()
+
         composeTestRule.waitUntil(5000) {
             composeTestRule.onAllNodesWithText("HDFC Premium Salary").fetchSemanticsNodes().isNotEmpty()
         }

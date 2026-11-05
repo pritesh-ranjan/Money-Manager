@@ -1,18 +1,28 @@
 package com.moneymanager.app.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Stars
 import androidx.compose.material.icons.filled.TrendingUp
@@ -30,26 +40,48 @@ import androidx.compose.ui.unit.sp
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.domain.AccountBalanceItem
 import com.moneymanager.app.domain.CurrencyFormatter
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
 import com.moneymanager.app.ui.theme.*
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 
 @Composable
 fun AccountsScreen(
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    onEditTransaction: (TransactionWithDetails) -> Unit = {}
 ) {
     val netWorthSummary by viewModel.netWorth.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
 
+    var selectedAccountUid by remember { mutableStateOf<String?>(null) }
     var showAdjustDialogFor by remember { mutableStateOf<AccountBalanceItem?>(null) }
     var showAddAccountDialog by remember { mutableStateOf(false) }
     var accountToEdit by remember { mutableStateOf<AccountEntity?>(null) }
+
+    // If an account is selected, render the dedicated Account Detail view with quick edit + scrollable transactions
+    val activeSelectedAccount = selectedAccountUid?.let { uid ->
+        allAccounts.firstOrNull { it.account.uid == uid }?.account
+    }
+
+    if (activeSelectedAccount != null) {
+        OneUiAccountDetailScreen(
+            account = activeSelectedAccount,
+            viewModel = viewModel,
+            onEditTransaction = onEditTransaction,
+            onBack = { selectedAccountUid = null }
+        )
+        return
+    }
 
     val nw = netWorthSummary
     val netWorthValue = nw?.netWorthBase ?: 0.0
@@ -164,7 +196,7 @@ fun AccountsScreen(
                                 item = balanceItem,
                                 badgeColor = badgePair.first,
                                 badgeIcon = badgePair.second,
-                                onClick = { accountToEdit = balanceItem.account },
+                                onClick = { selectedAccountUid = balanceItem.account.uid },
                                 onAdjustBalance = { showAdjustDialogFor = balanceItem }
                             )
 
@@ -204,7 +236,7 @@ fun AccountsScreen(
         )
     }
 
-    // Edit Account Dialog
+    // Edit Account Dialog fallback
     accountToEdit?.let { acc ->
         OneUiAddEditAccountDialog(
             existingAccount = acc,
@@ -220,6 +252,503 @@ fun AccountsScreen(
                 accountToEdit = null
             }
         )
+    }
+}
+
+/**
+ * Account Detail Sub-Screen featuring:
+ * 1. Quick Edit section on top (Account name, type, balances, credit card params, save button).
+ * 2. Balance hero with quick "Adjust" button.
+ * 3. Scrollable list of all transactions belonging specifically to this account, grouped by date with OneUiDayHeader & OneUiTransactionRowItem.
+ */
+@Composable
+fun OneUiAccountDetailScreen(
+    account: AccountEntity,
+    viewModel: MainViewModel,
+    onEditTransaction: (TransactionWithDetails) -> Unit = {},
+    onBack: () -> Unit
+) {
+    BackHandler(onBack = onBack)
+
+    val allTransactions by viewModel.allTransactionsUnfiltered.collectAsState()
+    val categoriesMap by viewModel.categoriesMap.collectAsState()
+    val allCurrencies by viewModel.allCurrencies.collectAsState()
+    val netWorthSummary by viewModel.netWorth.collectAsState()
+
+    val balanceItem = netWorthSummary?.accountBalances?.firstOrNull { it.account.uid == account.uid }
+    val nativeBalance = balanceItem?.nativeBalance ?: account.openingBalance
+    val currency = allCurrencies.firstOrNull { it.uid == account.currencyUid }
+        ?: balanceItem?.currency
+        ?: allCurrencies.firstOrNull { it.isMainCurrency }
+        ?: CurrencyEntity(uid = "INR", name = "Indian Rupee", isoCode = "INR", symbol = "₹", rateToBase = 1.0, isMainCurrency = true)
+
+    // Filter transactions belonging to this account specifically
+    val accountTransactions = remember(allTransactions, account.uid) {
+        allTransactions.filter {
+            it.account.uid == account.uid || it.toAccount?.uid == account.uid
+        }.sortedByDescending { it.transaction.timestamp }
+    }
+
+    // Group transactions by date for day headers
+    val groupedByDay = remember(accountTransactions) {
+        accountTransactions.groupBy { item ->
+            Instant.ofEpochMilli(item.transaction.timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+        }
+    }
+
+    // Quick Edit Local State
+    var quickName by remember(account) { mutableStateOf(account.name) }
+    var quickType by remember(account) { mutableStateOf(account.accountType) }
+    var quickStatementDay by remember(account) { mutableStateOf(account.statementDay?.toString() ?: "15") }
+    var quickDueDay by remember(account) { mutableStateOf(account.paymentDueDay?.toString() ?: "5") }
+    var quickLimit by remember(account) { mutableStateOf(account.creditLimit?.let { String.format(Locale.US, "%.0f", it) } ?: "100000") }
+    var quickOpeningBalance by remember(account) { mutableStateOf(String.format(Locale.US, "%.2f", account.openingBalance)) }
+    var quickIncludeInNetWorth by remember(account) { mutableStateOf(account.includeInNetWorth) }
+
+    var isQuickEditExpanded by remember { mutableStateOf(true) }
+    var showAdjustDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+    var showSaveSuccess by remember { mutableStateOf(false) }
+
+    val textFieldColors = TextFieldDefaults.colors(
+        focusedTextColor = OneUiTheme.colors.textPrimary,
+        unfocusedTextColor = OneUiTheme.colors.textPrimary,
+        focusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        unfocusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent
+    )
+
+    OneUiCollapsibleScaffold(
+        title = account.name,
+        subtitle = "${account.accountType.displayName} • ${currency.isoCode}",
+        expandedHeight = 155.dp,
+        centeredExpandedTitle = true,
+        navigationIcon = {
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = OneUiTheme.colors.textPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        },
+        actions = {
+            IconButton(
+                onClick = { showDeleteConfirmDialog = true },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete Account",
+                    tint = OneUiTheme.colors.expense,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    ) { contentPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(OneUiTheme.colors.background),
+            contentPadding = PaddingValues(
+                top = contentPadding.calculateTopPadding() + 6.dp,
+                bottom = 96.dp,
+                start = 16.dp,
+                end = 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Card 1: Balance Hero & Quick Edit Section
+            item(key = "account_balance_and_quick_edit") {
+                OneUiCard {
+                    // Balance Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Current balance",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontSize = 13.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+
+                            val isLiability = account.accountType.isLiability
+                            val balanceColor = if (isLiability) {
+                                if (nativeBalance > 0) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary
+                            } else {
+                                if (nativeBalance >= 0) OneUiTheme.colors.textPrimary else OneUiTheme.colors.expense
+                            }
+                            val sign = if (nativeBalance < 0 && !isLiability) "-" else ""
+
+                            Text(
+                                text = "$sign${currency.symbol} " + CurrencyFormatter.formatIndianNumber(abs(nativeBalance)),
+                                style = MaterialTheme.typography.headlineLarge.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = balanceColor,
+                                    fontSize = 28.sp
+                                )
+                            )
+                        }
+
+                        // Adjust balance button
+                        OneUiCapsuleChip(
+                            label = "Adjust",
+                            selected = false,
+                            onClick = { showAdjustDialog = true }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OneUiInsetDivider(startIndent = 0.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Quick Edit Accordion Toggle
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { isQuickEditExpanded = !isQuickEditExpanded }
+                            .padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = OneUiTheme.colors.primaryAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Quick account edit",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = OneUiTheme.colors.textPrimary,
+                                    fontSize = 14.sp
+                                )
+                            )
+                        }
+
+                        Icon(
+                            imageVector = if (isQuickEditExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isQuickEditExpanded) "Collapse" else "Expand",
+                            tint = OneUiTheme.colors.textSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Collapsible Quick Edit Fields
+                    AnimatedVisibility(visible = isQuickEditExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (validationError != null) {
+                                Text(
+                                    text = validationError!!,
+                                    color = OneUiTheme.colors.expense,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                            }
+
+                            // Account Name Field
+                            TextField(
+                                value = quickName,
+                                onValueChange = {
+                                    quickName = it
+                                    validationError = null
+                                    showSaveSuccess = false
+                                },
+                                label = { Text("Account Name") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
+                                colors = textFieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Account Type Selector Chips
+                            Text(
+                                text = "Account Type",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontSize = 12.sp
+                                )
+                            )
+                            val commonAccountTypes = listOf(
+                                AccountType.SAVINGS,
+                                AccountType.CREDIT_CARD,
+                                AccountType.CASH,
+                                AccountType.WALLET,
+                                AccountType.UPI_DEBIT,
+                                AccountType.MUTUAL_FUNDS,
+                                AccountType.EQUITY,
+                                AccountType.LOAN,
+                                AccountType.OTHER
+                            )
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(commonAccountTypes) { type ->
+                                    OneUiCapsuleChip(
+                                        label = type.displayName,
+                                        selected = quickType == type,
+                                        onClick = {
+                                            quickType = type
+                                            showSaveSuccess = false
+                                        }
+                                    )
+                                }
+                            }
+
+                            // Credit Card specifics
+                            if (quickType == AccountType.CREDIT_CARD) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextField(
+                                        value = quickStatementDay,
+                                        onValueChange = { quickStatementDay = it; showSaveSuccess = false },
+                                        label = { Text("Stmt Day (1-31)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = textFieldColors
+                                    )
+                                    TextField(
+                                        value = quickDueDay,
+                                        onValueChange = { quickDueDay = it; showSaveSuccess = false },
+                                        label = { Text("Due Day (1-31)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = textFieldColors
+                                    )
+                                }
+
+                                TextField(
+                                    value = quickLimit,
+                                    onValueChange = { quickLimit = it; showSaveSuccess = false },
+                                    label = { Text("Credit Limit") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = textFieldColors,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // Opening Balance Field
+                            TextField(
+                                value = quickOpeningBalance,
+                                onValueChange = { quickOpeningBalance = it; showSaveSuccess = false },
+                                label = { Text("Opening Balance (${currency.symbol})") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
+                                colors = textFieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Include in Net Worth Row
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Include in Net Worth",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = OneUiTheme.colors.textPrimary)
+                                )
+                                Switch(
+                                    checked = quickIncludeInNetWorth,
+                                    onCheckedChange = {
+                                        quickIncludeInNetWorth = it
+                                        showSaveSuccess = false
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = OneUiTheme.colors.primaryAccent,
+                                        uncheckedThumbColor = OneUiTheme.colors.textMuted,
+                                        uncheckedTrackColor = OneUiTheme.colors.surfaceElevated
+                                    )
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Save Changes Button
+                            OneUiPillButton(
+                                text = if (showSaveSuccess) "Changes Saved!" else "Save Changes",
+                                onClick = {
+                                    val cleanName = quickName.trim()
+                                    if (cleanName.isEmpty()) {
+                                        validationError = "Account name cannot be empty"
+                                        return@OneUiPillButton
+                                    }
+
+                                    val stmtDay = quickStatementDay.toIntOrNull()
+                                    val dueDay = quickDueDay.toIntOrNull()
+                                    val limit = quickLimit.toDoubleOrNull()
+                                    val openingBal = quickOpeningBalance.toDoubleOrNull() ?: account.openingBalance
+
+                                    val updated = account.copy(
+                                        name = cleanName,
+                                        accountType = quickType,
+                                        openingBalance = openingBal,
+                                        statementDay = if (quickType == AccountType.CREDIT_CARD) stmtDay else null,
+                                        paymentDueDay = if (quickType == AccountType.CREDIT_CARD) dueDay else null,
+                                        creditLimit = if (quickType == AccountType.CREDIT_CARD) limit else null,
+                                        includeInNetWorth = quickIncludeInNetWorth
+                                    )
+
+                                    viewModel.saveAccount(updated)
+                                    validationError = null
+                                    showSaveSuccess = true
+                                },
+                                containerColor = if (showSaveSuccess) OneUiTheme.colors.income else OneUiTheme.colors.primaryAccent,
+                                contentColor = Color.White,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Card 2: Transactions Header
+            item(key = "account_txs_header") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Transactions (${accountTransactions.size})",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = OneUiTheme.colors.textPrimary,
+                            fontSize = 16.sp
+                        )
+                    )
+                    Text(
+                        text = "All Time",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = OneUiTheme.colors.textSecondary,
+                            fontSize = 12.sp
+                        )
+                    )
+                }
+            }
+
+            // Card 3: Scrollable Transaction List
+            if (accountTransactions.isEmpty()) {
+                item(key = "account_no_txs") {
+                    OneUiCard {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 36.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                contentDescription = null,
+                                tint = OneUiTheme.colors.textMuted,
+                                modifier = Modifier.size(42.dp)
+                            )
+                            Text(
+                                text = "No transactions found for this account",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = OneUiTheme.colors.textSecondary)
+                            )
+                        }
+                    }
+                }
+            } else {
+                groupedByDay.forEach { (date, dailyItems) ->
+                    val dayIncome = dailyItems.filter {
+                        it.transaction.type == TransactionType.INCOME ||
+                                (it.transaction.type == TransactionType.TRANSFER && it.toAccount?.uid == account.uid)
+                    }.sumOf { it.transaction.baseAmount }
+
+                    val dayExpense = dailyItems.filter {
+                        it.transaction.type == TransactionType.EXPENSE ||
+                                (it.transaction.type == TransactionType.TRANSFER && it.account.uid == account.uid)
+                    }.sumOf { it.transaction.baseAmount }
+
+                    item(key = "day_header_${date}_${account.uid}") {
+                        OneUiDayHeader(date = date, dayIncome = dayIncome, dayExpense = dayExpense)
+                    }
+
+                    item(key = "day_card_${date}_${account.uid}") {
+                        OneUiCard {
+                            dailyItems.forEachIndexed { index, item ->
+                                OneUiTransactionRowItem(
+                                    item = item,
+                                    categoriesMap = categoriesMap,
+                                    colorIndex = index,
+                                    showDate = false,
+                                    onClick = { onEditTransaction(item) }
+                                )
+
+                                if (index < dailyItems.lastIndex) {
+                                    OneUiInsetDivider(startIndent = 18.dp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Revaluation Adjustment Dialog
+    if (showAdjustDialog && balanceItem != null) {
+        OneUiRevaluationAdjustmentDialog(
+            item = balanceItem,
+            onDismiss = { showAdjustDialog = false },
+            onConfirm = { newBalance ->
+                viewModel.adjustBalance(account, currency, nativeBalance, newBalance)
+                showAdjustDialog = false
+            }
+        )
+    }
+
+    // Delete Confirmation Dialog
+    if (showDeleteConfirmDialog) {
+        OneUiBottomDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = "Delete Account",
+            confirmButtonText = "Delete",
+            confirmButtonColor = OneUiTheme.colors.expense,
+            onConfirm = {
+                showDeleteConfirmDialog = false
+                viewModel.deleteAccount(account)
+                onBack()
+            }
+        ) {
+            Text(
+                "Are you sure you want to delete '${account.name}'? If it has linked transactions, it will be safely archived.",
+                color = OneUiTheme.colors.textSecondary
+            )
+        }
     }
 }
 

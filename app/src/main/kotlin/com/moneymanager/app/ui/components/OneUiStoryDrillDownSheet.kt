@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.domain.CurrencyFormatter
 import com.moneymanager.app.domain.MonthlyMoneyStoryEngine
 import com.moneymanager.app.domain.StoryInsightCard
@@ -34,6 +35,7 @@ import kotlin.math.abs
 @Composable
 fun OneUiStoryDrillDownSheet(
     insight: StoryInsightCard,
+    onEditTransaction: ((TransactionWithDetails) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(
@@ -155,37 +157,14 @@ fun OneUiStoryDrillDownSheet(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     items(insight.underlyingTransactions, key = { it.transaction.uid }) { txItem ->
-                        val dateStr = Instant.ofEpochMilli(txItem.transaction.timestamp)
-                            .atZone(ZoneId.systemDefault())
-                            .toLocalDate()
-                            .format(DateTimeFormatter.ofPattern("dd MMM yyyy"))
-
-                        val title = txItem.transaction.note.ifBlank {
-                            txItem.category?.name ?: txItem.transaction.type.displayName
-                        }
-
-                        val accentColor = when (txItem.transaction.type) {
-                            TransactionType.INCOME -> Color(0xFF34C759)
-                            TransactionType.EXPENSE -> Color(0xFFFF5252)
-                            TransactionType.TRANSFER -> OneUiTheme.colors.primaryAccent
-                            TransactionType.ADJUSTMENT -> Color(0xFF8E8E93)
-                        }
-
-                        val amountPrefix = when (txItem.transaction.type) {
-                            TransactionType.INCOME -> "+₹"
-                            TransactionType.EXPENSE -> "-₹"
-                            TransactionType.TRANSFER -> "₹"
-                            TransactionType.ADJUSTMENT -> "₹"
-                        }
-
-                        OneUiVerticalAccentRow(
-                            title = title,
-                            subtitle = "$dateStr • ${txItem.account.name}" + (txItem.toAccount?.let { " → ${it.name}" } ?: ""),
-                            valueText = amountPrefix + MonthlyMoneyStoryEngine.formatStoryAmount(abs(txItem.transaction.baseAmount)),
-                            accentColor = accentColor
+                        OneUiTransactionRowItem(
+                            item = txItem,
+                            categoriesMap = emptyMap(),
+                            showDate = true,
+                            onClick = { onEditTransaction?.invoke(txItem) }
                         )
 
-                        OneUiInsetDivider(startIndent = 16.dp)
+                        OneUiInsetDivider(startIndent = 18.dp)
                     }
                 }
             }

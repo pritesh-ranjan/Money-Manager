@@ -1,12 +1,16 @@
 package com.moneymanager.app.ui.screens
 
+import android.app.DatePickerDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -14,9 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +33,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,7 +44,9 @@ import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.domain.CurrencyFormatter
 import com.moneymanager.app.ui.components.*
+import com.moneymanager.app.ui.main.DateFilterPreset
 import com.moneymanager.app.ui.main.MainViewModel
+import com.moneymanager.app.ui.main.TransactionFilterState
 import com.moneymanager.app.ui.theme.*
 import java.time.DayOfWeek
 import java.time.Instant
@@ -44,6 +54,7 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Calendar
 import java.util.Locale
 import kotlin.math.abs
 
@@ -62,14 +73,13 @@ fun TransactionsScreen(
 ) {
     val selectedYm by viewModel.selectedYearMonth.collectAsState()
     val transactions by viewModel.transactions.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
+    val filterState by viewModel.filterState.collectAsState()
     val allTags by viewModel.allTags.collectAsState()
-    val selectedTag by viewModel.selectedTag.collectAsState()
+    val allAccounts by viewModel.accounts.collectAsState()
     val categoriesMap by viewModel.categoriesMap.collectAsState()
 
     var activeSubTab by remember { mutableStateOf(DailySubTab.DAILY) }
     var isSearchScreenOpen by remember { mutableStateOf(false) }
-    var selectedTypeFilter by remember { mutableStateOf<TransactionType?>(null) }
     var selectedDateFilter by remember(selectedYm) { mutableStateOf<LocalDate?>(null) }
 
     // 7-day strip centered around today (if current month) or end/middle of selected month
@@ -95,15 +105,17 @@ fun TransactionsScreen(
     }
     val netTotal = totalIncome - totalExpense
 
-    // Apply Date Filter & Type Filter
-    val displayedTransactions = remember(transactions, selectedDateFilter, selectedTypeFilter) {
-        transactions.filter { item ->
-            val txDate = Instant.ofEpochMilli(item.transaction.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            val matchesDate = selectedDateFilter == null || txDate == selectedDateFilter
-            val matchesType = selectedTypeFilter == null || item.transaction.type == selectedTypeFilter
-            matchesDate && matchesType
+    // Apply 7-day Date Filter if user clicked a specific day on the strip
+    val displayedTransactions = remember(transactions, selectedDateFilter) {
+        if (selectedDateFilter == null) {
+            transactions
+        } else {
+            transactions.filter { item ->
+                val txDate = Instant.ofEpochMilli(item.transaction.timestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                txDate == selectedDateFilter
+            }
         }
     }
 
@@ -117,15 +129,7 @@ fun TransactionsScreen(
 
     if (isSearchScreenOpen) {
         OneUiSearchAndFilterScreen(
-            searchQuery = searchQuery,
-            onSearchQueryChange = { viewModel.setSearchQuery(it) },
-            allTags = allTags.map { it.uid to it.name },
-            selectedTag = selectedTag,
-            onTagSelected = { viewModel.setSelectedTag(it) },
-            selectedTypeFilter = selectedTypeFilter,
-            onTypeFilterSelected = { selectedTypeFilter = it },
-            matchingTransactions = displayedTransactions,
-            categoriesMap = categoriesMap,
+            viewModel = viewModel,
             onTransactionClick = { tx ->
                 isSearchScreenOpen = false
                 onEditTransaction(tx)
@@ -184,13 +188,40 @@ fun TransactionsScreen(
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "Search",
-                    tint = if (searchQuery.isNotEmpty() || selectedTag != null || selectedTypeFilter != null) {
+                    tint = if (filterState.query.isNotEmpty()) {
                         OneUiTheme.colors.primaryAccent
                     } else {
                         OneUiTheme.colors.textPrimary
                     },
                     modifier = Modifier.size(22.dp)
                 )
+            }
+
+            IconButton(
+                onClick = { isSearchScreenOpen = true },
+                modifier = Modifier.size(38.dp)
+            ) {
+                Box {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Filter",
+                        tint = if (filterState.hasActiveFilters) {
+                            OneUiTheme.colors.primaryAccent
+                        } else {
+                            OneUiTheme.colors.textPrimary
+                        },
+                        modifier = Modifier.size(22.dp)
+                    )
+                    if (filterState.hasActiveFilters) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(OneUiTheme.colors.primaryAccent)
+                                .align(Alignment.TopEnd)
+                        )
+                    }
+                }
             }
         }
     ) { contentPadding ->
@@ -235,33 +266,119 @@ fun TransactionsScreen(
             }
 
             // Active Filter Indicator Chip Bar (if search/tag/type filter is active)
-            if (searchQuery.isNotEmpty() || selectedTag != null || selectedTypeFilter != null) {
+            if (filterState.hasActiveFilters) {
                 item(key = "active_filters_bar") {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (searchQuery.isNotEmpty()) {
+                        if (filterState.datePreset != null) {
+                            val dateLabel = if (filterState.datePreset == DateFilterPreset.CUSTOM) {
+                                val s = filterState.customStartDate?.format(DateTimeFormatter.ofPattern("dd MMM")) ?: ""
+                                val e = filterState.customEndDate?.format(DateTimeFormatter.ofPattern("dd MMM")) ?: ""
+                                "$s - $e"
+                            } else {
+                                filterState.datePreset!!.label
+                            }
                             OneUiCapsuleChip(
-                                label = "\"$searchQuery\"",
+                                label = dateLabel,
                                 selected = true,
-                                onClick = { viewModel.setSearchQuery("") }
+                                onClick = { viewModel.setDatePreset(null) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
                             )
                         }
-                        if (selectedTag != null) {
-                            val tagName = allTags.firstOrNull { it.uid == selectedTag }?.name ?: selectedTag!!
+                        if (filterState.query.isNotEmpty()) {
+                            OneUiCapsuleChip(
+                                label = "\"${filterState.query}\"",
+                                selected = true,
+                                onClick = { viewModel.setSearchQuery("") },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+                        filterState.selectedTypes.forEach { type ->
+                            OneUiCapsuleChip(
+                                label = type.displayName,
+                                selected = true,
+                                onClick = { viewModel.toggleFilterType(type) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+                        filterState.selectedAccountUids.forEach { accUid ->
+                            val accName = allAccounts.firstOrNull { it.account.uid == accUid }?.account?.name ?: "Account"
+                            OneUiCapsuleChip(
+                                label = accName,
+                                selected = true,
+                                onClick = { viewModel.toggleFilterAccount(accUid) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+                        filterState.selectedCategoryUids.forEach { catUid ->
+                            val catName = categoriesMap[catUid]?.name ?: "Category"
+                            OneUiCapsuleChip(
+                                label = catName,
+                                selected = true,
+                                onClick = { viewModel.toggleFilterCategory(catUid) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+                        filterState.selectedTagUids.forEach { tagUid ->
+                            val tagName = allTags.firstOrNull { it.uid == tagUid }?.name ?: tagUid
                             OneUiCapsuleChip(
                                 label = "#$tagName",
                                 selected = true,
-                                onClick = { viewModel.setSelectedTag(null) }
+                                onClick = { viewModel.toggleFilterTag(tagUid) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
                             )
                         }
-                        if (selectedTypeFilter != null) {
-                            OneUiCapsuleChip(
-                                label = selectedTypeFilter!!.displayName,
-                                selected = true,
-                                onClick = { selectedTypeFilter = null }
+                        if (filterState.activeFilterCount > 1) {
+                            OneUiTextActionLink(
+                                text = "Clear all",
+                                onClick = { viewModel.clearAllFilters() }
                             )
                         }
                     }
@@ -463,15 +580,15 @@ fun TransactionsScreen(
                                         color = OneUiTheme.colors.textSecondary
                                     )
                                 } else {
-                                    notedTxs.take(15).forEachIndexed { idx, item ->
-                                        OneUiVerticalAccentRow(
-                                            title = item.transaction.note,
-                                            subtitle = "${item.category?.name ?: item.transaction.type.displayName} • ${item.account.name}",
-                                            valueText = "₹" + CurrencyFormatter.formatIndianNumber(abs(item.transaction.baseAmount)),
-                                            accentColor = StatsPieColors[idx % StatsPieColors.size],
+                                    notedTxs.take(25).forEachIndexed { idx, item ->
+                                        OneUiTransactionRowItem(
+                                            item = item,
+                                            categoriesMap = categoriesMap,
+                                            colorIndex = idx,
+                                            showDate = true,
                                             onClick = { onEditTransaction(item) }
                                         )
-                                        if (idx < notedTxs.take(15).lastIndex) {
+                                        if (idx < notedTxs.take(25).lastIndex) {
                                             OneUiInsetDivider(startIndent = 18.dp)
                                         }
                                     }
@@ -554,243 +671,52 @@ private fun OneUiLegendMetricRow(
     }
 }
 
-@Composable
-fun OneUiDayHeader(
-    date: LocalDate,
-    dayIncome: Double,
-    dayExpense: Double
-) {
-    val dayOfWeek = date.dayOfWeek
-    val dayLetter = dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
-    val isToday = date == LocalDate.now()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Day of month pill (Screenshot 3 style)
-        Box(
-            modifier = Modifier
-                .height(26.dp)
-                .clip(CircleShape)
-                .background(
-                    if (isToday) OneUiTheme.colors.primaryAccent else OneUiTheme.colors.surfaceElevated
-                )
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "${date.dayOfMonth} $dayLetter",
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = FontWeight.Medium,
-                    color = if (isToday) Color.White else OneUiTheme.colors.textPrimary,
-                    fontSize = 12.5.sp
-                )
-            )
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Text(
-            text = if (isToday) "Today" else date.format(DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault())),
-            style = MaterialTheme.typography.bodySmall.copy(
-                color = OneUiTheme.colors.textMuted,
-                fontSize = 12.sp
-            )
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        if (dayIncome > 0) {
-            Text(
-                text = "+₹" + CurrencyFormatter.formatIndianNumber(dayIncome),
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Normal,
-                    color = OneUiTheme.colors.income,
-                    fontSize = 12.5.sp
-                ),
-                modifier = Modifier.padding(end = 8.dp)
-            )
-        }
-
-        if (dayExpense > 0) {
-            Text(
-                text = "-₹" + CurrencyFormatter.formatIndianNumber(dayExpense),
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Normal,
-                    color = OneUiTheme.colors.textPrimary,
-                    fontSize = 12.5.sp
-                )
-            )
-        }
-    }
-}
-
 /**
- * Transaction Row styled with Screenshot 2's Vertical Colored Accent Bar.
- */
-@Composable
-fun OneUiTransactionRowItem(
-    item: TransactionWithDetails,
-    categoriesMap: Map<String, CategoryEntity>,
-    colorIndex: Int = 0,
-    onClick: Unit? = null,
-    onClickAction: () -> Unit
-) {
-    val tx = item.transaction
-    val cat = item.category
-    val parentCat = if (cat?.parentUid != null) categoriesMap[cat.parentUid] else null
-    val rootCategoryName = when {
-        parentCat != null -> parentCat.name
-        cat != null -> cat.name
-        tx.type == TransactionType.TRANSFER -> "Transfer"
-        tx.type == TransactionType.ADJUSTMENT -> "Adjustment"
-        else -> "Uncategorized"
-    }
-    val subCategoryName = if (parentCat != null) cat?.name else null
-
-    val barColor = when (tx.type) {
-        TransactionType.INCOME -> OneUiTheme.colors.income
-        TransactionType.TRANSFER -> OneUiTheme.colors.secondaryCyan
-        TransactionType.ADJUSTMENT -> OneUiTheme.colors.warning
-        TransactionType.EXPENSE -> StatsPieColors[abs(rootCategoryName.hashCode()) % StatsPieColors.size]
-    }
-
-    val amountColor = when (tx.type) {
-        TransactionType.INCOME -> OneUiTheme.colors.income
-        TransactionType.EXPENSE -> OneUiTheme.colors.textPrimary
-        TransactionType.TRANSFER -> OneUiTheme.colors.primaryAccent
-        TransactionType.ADJUSTMENT -> OneUiTheme.colors.warning
-    }
-
-    val titleText = if (tx.note.isNotBlank()) tx.note else rootCategoryName
-    val accountLabel = if (tx.type == TransactionType.TRANSFER && item.toAccount != null) {
-        "${item.account.name} → ${item.toAccount.name}"
-    } else {
-        item.account.name
-    }
-    val catHierarchy = if (!subCategoryName.isNullOrBlank()) "$rootCategoryName ($subCategoryName)" else rootCategoryName
-    val tagsLabel = if (item.tags.isNotEmpty()) " • " + item.tags.joinToString(" ") { "#${it.name}" } else ""
-    val subtitleText = "$catHierarchy • $accountLabel$tagsLabel"
-
-    val prefix = when (tx.type) {
-        TransactionType.INCOME -> "+₹"
-        TransactionType.EXPENSE -> "-₹"
-        else -> "₹"
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClickAction)
-            .padding(vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Vertical Colored Accent Pill (3.2.dp wide x 24.dp tall, matching Screenshot 2)
-        Box(
-            modifier = Modifier
-                .width(3.2.dp)
-                .height(24.dp)
-                .clip(CircleShape)
-                .background(barColor)
-        )
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        // Title & Subtitle
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = titleText,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    color = OneUiTheme.colors.textPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Normal
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = subtitleText,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = OneUiTheme.colors.textSecondary,
-                    fontSize = 12.5.sp
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        // Right-Aligned Amount
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = prefix + CurrencyFormatter.formatIndianNumber(abs(tx.baseAmount)),
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Normal,
-                    color = amountColor,
-                    fontSize = 14.5.sp
-                )
-            )
-            if (!item.currency.isMainCurrency) {
-                Text(
-                    text = "${item.currency.symbol} ${CurrencyFormatter.formatIndianNumber(abs(tx.accountAmount))}",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = OneUiTheme.colors.textMuted,
-                        fontSize = 11.sp
-                    )
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun OneUiTransactionRowItem(
-    item: TransactionWithDetails,
-    categoriesMap: Map<String, CategoryEntity>,
-    colorIndex: Int = 0,
-    onClick: () -> Unit
-) {
-    OneUiTransactionRowItem(
-        item = item,
-        categoriesMap = categoriesMap,
-        colorIndex = colorIndex,
-        onClick = null,
-        onClickAction = onClick
-    )
-}
-
-/**
- * Dedicated One UI 9 Search & Filter Screen (Direct match to Screenshot 5 "Recently used settings").
+ * Dedicated One UI 9 Multi-Criteria Search & Filter Screen.
+ * Strictly adheres to Samsung One UI 9 design specifications (Reference Screenshot 3).
+ * Allows filtering simultaneously by Date Range, Type, Account, Category/Subcategory, Tags, and Note query.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OneUiSearchAndFilterScreen(
-    searchQuery: String,
-    onSearchQueryChange: (String) -> Unit,
-    allTags: List<Pair<String, String>>,
-    selectedTag: String?,
-    onTagSelected: (String?) -> Unit,
-    selectedTypeFilter: TransactionType?,
-    onTypeFilterSelected: (TransactionType?) -> Unit,
-    matchingTransactions: List<TransactionWithDetails>,
-    categoriesMap: Map<String, CategoryEntity>,
+    viewModel: MainViewModel,
     onTransactionClick: (TransactionWithDetails) -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val filterState by viewModel.filterState.collectAsState()
+    val matchingTransactions by viewModel.transactions.collectAsState()
+    val allTags by viewModel.allTags.collectAsState()
+    val allAccounts by viewModel.accounts.collectAsState()
+    val categoriesMap by viewModel.categoriesMap.collectAsState()
+    val expenseCategories by viewModel.expenseCategories.collectAsState()
+    val incomeCategories by viewModel.incomeCategories.collectAsState()
+
+    var filtersExpanded by remember { mutableStateOf(true) }
     val focusRequester = remember { FocusRequester() }
 
     BackHandler(onBack = onBack)
 
-    LaunchedEffect(Unit) {
-        try {
-            focusRequester.requestFocus()
-        } catch (_: Exception) {}
+    val allRootCategories = remember(expenseCategories, incomeCategories) {
+        val rootList = mutableListOf<CategoryEntity>()
+        rootList.addAll(expenseCategories.map { it.category })
+        rootList.addAll(incomeCategories.map { it.category })
+        rootList.distinctBy { it.uid }
+    }
+
+    val selectedRootWithSubcategories = remember(filterState.selectedCategoryUids, expenseCategories, incomeCategories) {
+        val allCatsWithSubs = expenseCategories + incomeCategories
+        allCatsWithSubs.filter { catWithSub ->
+            filterState.selectedCategoryUids.contains(catWithSub.category.uid) && catWithSub.subcategories.isNotEmpty()
+        }
+    }
+
+    val groupedByDay = remember(matchingTransactions) {
+        matchingTransactions.groupBy { item ->
+            Instant.ofEpochMilli(item.transaction.timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+        }.toSortedMap(compareByDescending { it })
     }
 
     Column(
@@ -800,92 +726,406 @@ fun OneUiSearchAndFilterScreen(
             .statusBarsPadding()
             .imePadding()
     ) {
-        // Top Bar with '<' Back Chevron (Screenshot 5)
-        OneUiSubScreenTopBar(
-            title = "",
-            onBack = onBack
-        )
+        // Top Bar matching Screenshot 3 ("< Filters" + Clear all)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = "Back",
+                    tint = OneUiTheme.colors.textPrimary,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { filtersExpanded = !filtersExpanded }
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "Filters",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = OneUiTheme.colors.textPrimary,
+                        fontSize = 20.sp
+                    )
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = if (filtersExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (filtersExpanded) "Collapse filters" else "Expand filters",
+                    tint = OneUiTheme.colors.textPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            if (filterState.hasActiveFilters) {
+                OneUiTextActionLink(
+                    text = "Clear all",
+                    onClick = { viewModel.clearAllFilters() }
+                )
+            }
+        }
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
         ) {
-            // Section 1: "Recently used filters" with Wrapped Capsule Chips (Screenshot 5)
-            item(key = "filter_chips_section") {
-                Text(
-                    text = "Quick filters & tags",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        color = OneUiTheme.colors.textPrimary,
-                        fontSize = 19.sp
-                    )
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth()
+            // Section 1: Collapsible One UI 9 Filter Island
+            item(key = "filters_card") {
+                AnimatedVisibility(
+                    visible = filtersExpanded,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
                 ) {
-                    // Transaction Type Capsules
-                    TransactionType.values().forEach { type ->
-                        val isSelected = selectedTypeFilter == type
-                        OneUiCapsuleChip(
-                            label = type.displayName,
-                            selected = isSelected,
-                            onClick = {
-                                onTypeFilterSelected(if (isSelected) null else type)
-                            }
+                    OneUiCard {
+                        // 1. Time Presets
+                        Text(
+                            text = "Time",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = OneUiTheme.colors.textSecondary,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp
+                            )
                         )
-                    }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val timePresets = listOf(
+                                DateFilterPreset.YESTERDAY,
+                                DateFilterPreset.PAST_7_DAYS,
+                                DateFilterPreset.PAST_30_DAYS,
+                                DateFilterPreset.THIS_MONTH,
+                                DateFilterPreset.CUSTOM
+                            )
+                            timePresets.forEach { preset ->
+                                val isSelected = filterState.datePreset == preset
+                                OneUiCapsuleChip(
+                                    label = preset.label,
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.setDatePreset(if (isSelected) null else preset)
+                                    }
+                                )
+                            }
+                        }
 
-                    // Tag Capsules
-                    allTags.forEach { (uid, name) ->
-                        val isSelected = selectedTag == uid
-                        OneUiCapsuleChip(
-                            label = "#$name",
-                            selected = isSelected,
-                            onClick = {
-                                onTagSelected(if (isSelected) null else uid)
+                        // Custom Date Range Pickers (if Custom is selected)
+                        if (filterState.datePreset == DateFilterPreset.CUSTOM) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val cal = Calendar.getInstance()
+                                val startStr = filterState.customStartDate?.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) ?: "Start Date"
+                                val endStr = filterState.customEndDate?.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) ?: "End Date"
+
+                                OneUiPillButton(
+                                    text = startStr,
+                                    onClick = {
+                                        DatePickerDialog(
+                                            context,
+                                            { _, y, m, d ->
+                                                viewModel.setCustomDateRange(LocalDate.of(y, m + 1, d), filterState.customEndDate)
+                                            },
+                                            cal.get(Calendar.YEAR),
+                                            cal.get(Calendar.MONTH),
+                                            cal.get(Calendar.DAY_OF_MONTH)
+                                        ).show()
+                                    },
+                                    containerColor = OneUiTheme.colors.surfaceElevated,
+                                    contentColor = OneUiTheme.colors.textPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                Text("to", color = OneUiTheme.colors.textSecondary, fontSize = 12.sp)
+
+                                OneUiPillButton(
+                                    text = endStr,
+                                    onClick = {
+                                        DatePickerDialog(
+                                            context,
+                                            { _, y, m, d ->
+                                                viewModel.setCustomDateRange(filterState.customStartDate, LocalDate.of(y, m + 1, d))
+                                            },
+                                            cal.get(Calendar.YEAR),
+                                            cal.get(Calendar.MONTH),
+                                            cal.get(Calendar.DAY_OF_MONTH)
+                                        ).show()
+                                    },
+                                    containerColor = OneUiTheme.colors.surfaceElevated,
+                                    contentColor = OneUiTheme.colors.textPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OneUiInsetDivider(startIndent = 0.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 2. Transaction Type
+                        Text(
+                            text = "Type",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = OneUiTheme.colors.textSecondary,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp
+                            )
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            TransactionType.values().forEach { type ->
+                                val isSelected = filterState.selectedTypes.contains(type)
+                                OneUiCapsuleChip(
+                                    label = type.displayName,
+                                    selected = isSelected,
+                                    onClick = { viewModel.toggleFilterType(type) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OneUiInsetDivider(startIndent = 0.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 3. Accounts
+                        Text(
+                            text = "Accounts",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = OneUiTheme.colors.textSecondary,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            allAccounts.forEach { accItem ->
+                                val isSelected = filterState.selectedAccountUids.contains(accItem.account.uid)
+                                OneUiCapsuleChip(
+                                    label = accItem.account.name,
+                                    selected = isSelected,
+                                    onClick = { viewModel.toggleFilterAccount(accItem.account.uid) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OneUiInsetDivider(startIndent = 0.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 4. Categories & Subcategories
+                        Text(
+                            text = "Categories",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = OneUiTheme.colors.textSecondary,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            allRootCategories.forEach { cat ->
+                                val isSelected = filterState.selectedCategoryUids.contains(cat.uid)
+                                OneUiCapsuleChip(
+                                    label = cat.name,
+                                    selected = isSelected,
+                                    onClick = { viewModel.toggleFilterCategory(cat.uid) }
+                                )
+                            }
+                        }
+
+                        // Subcategory drill-down chips if parent is selected
+                        if (selectedRootWithSubcategories.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            selectedRootWithSubcategories.forEach { parentWithSubs ->
+                                Text(
+                                    text = "${parentWithSubs.category.name} subcategories",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = OneUiTheme.colors.primaryAccent,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 8.dp)
+                                ) {
+                                    parentWithSubs.subcategories.forEach { sub ->
+                                        val isSubSelected = filterState.selectedCategoryUids.contains(sub.uid)
+                                        OneUiCapsuleChip(
+                                            label = sub.name,
+                                            selected = isSubSelected,
+                                            onClick = { viewModel.toggleFilterCategory(sub.uid) }
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
+                        }
+
+                        if (allTags.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            OneUiInsetDivider(startIndent = 0.dp)
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // 5. Tags
+                            Text(
+                                text = "Tags",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 13.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                allTags.forEach { tag ->
+                                    val isSelected = filterState.selectedTagUids.contains(tag.uid)
+                                    OneUiCapsuleChip(
+                                        label = "#${tag.name}",
+                                        selected = isSelected,
+                                        onClick = { viewModel.toggleFilterTag(tag.uid) }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OneUiInsetDivider(startIndent = 0.dp)
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 6. Screenshot 3 style switch: "Search by note only"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.setSearchNoteOnly(!filterState.searchNoteOnly) }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Search by note only",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    color = OneUiTheme.colors.textPrimary,
+                                    fontSize = 15.sp
+                                )
+                            )
+                            OneUiSwitch(
+                                checked = filterState.searchNoteOnly,
+                                onCheckedChange = { viewModel.setSearchNoteOnly(it) }
+                            )
+                        }
                     }
                 }
             }
 
-            // Section 2: Matching Transactions Preview
-            if (searchQuery.isNotBlank() || selectedTag != null || selectedTypeFilter != null) {
-                item(key = "search_results_card") {
-                    OneUiCard {
-                        Text(
-                            text = "Matching records (${matchingTransactions.size})",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                color = OneUiTheme.colors.textSecondary
-                            )
+            // Section 2: Matching Records Section
+            item(key = "matching_header") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Matching records (${matchingTransactions.size})",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = OneUiTheme.colors.textPrimary,
+                            fontSize = 16.sp
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                    )
+                }
+            }
 
-                        if (matchingTransactions.isEmpty()) {
+            if (matchingTransactions.isEmpty()) {
+                item(key = "empty_matching_state") {
+                    OneUiCard {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 28.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text(
-                                text = "No matching transactions found.",
+                                text = "No transactions match your active filters.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = OneUiTheme.colors.textMuted,
-                                modifier = Modifier.padding(vertical = 16.dp)
+                                color = OneUiTheme.colors.textSecondary,
+                                textAlign = TextAlign.Center
                             )
-                        } else {
-                            matchingTransactions.take(25).forEachIndexed { idx, tx ->
+                        }
+                    }
+                }
+            } else {
+                groupedByDay.forEach { (date, dayTxs) ->
+                    item(key = "search_day_$date") {
+                        val dayIncome = dayTxs.filter { it.transaction.type == TransactionType.INCOME }.sumOf { it.transaction.baseAmount }
+                        val dayExpense = dayTxs.filter { it.transaction.type == TransactionType.EXPENSE }.sumOf { it.transaction.baseAmount }
+
+                        OneUiCard {
+                            OneUiDayHeader(
+                                date = date,
+                                dayIncome = dayIncome,
+                                dayExpense = dayExpense
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OneUiInsetDivider(startIndent = 0.dp)
+
+                            dayTxs.forEachIndexed { index, item ->
                                 OneUiTransactionRowItem(
-                                    item = tx,
+                                    item = item,
                                     categoriesMap = categoriesMap,
-                                    colorIndex = idx,
-                                    onClick = { onTransactionClick(tx) }
+                                    colorIndex = index,
+                                    onClick = { onTransactionClick(item) }
                                 )
-                                if (idx < matchingTransactions.take(25).lastIndex) {
+
+                                if (index < dayTxs.lastIndex) {
                                     OneUiInsetDivider(startIndent = 18.dp)
                                 }
                             }
@@ -895,7 +1135,7 @@ fun OneUiSearchAndFilterScreen(
             }
         }
 
-        // Bottom Search Input Pill above Keyboard (Exact match to Screenshot 5)
+        // Bottom Search Input Pill above Keyboard (Exact match to Screenshot 3 & 5)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -911,12 +1151,42 @@ fun OneUiSearchAndFilterScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 18.dp),
+                        .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (filterState.activeFilterCount > 0) {
+                        Surface(
+                            shape = CircleShape,
+                            color = OneUiTheme.colors.primaryAccent,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { viewModel.clearAllFilters() }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${filterState.activeFilterCount} active",
+                                    color = Color.White,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear filters",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
                     BasicTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchQueryChange,
+                        value = filterState.query,
+                        onValueChange = { viewModel.setSearchQuery(it) },
                         modifier = Modifier
                             .weight(1f)
                             .focusRequester(focusRequester),
@@ -927,9 +1197,9 @@ fun OneUiSearchAndFilterScreen(
                         singleLine = true,
                         cursorBrush = SolidColor(OneUiTheme.colors.primaryAccent),
                         decorationBox = { innerTextField ->
-                            if (searchQuery.isEmpty()) {
+                            if (filterState.query.isEmpty()) {
                                 Text(
-                                    text = "Search",
+                                    text = if (filterState.searchNoteOnly) "Search note only..." else "Search transactions...",
                                     style = MaterialTheme.typography.bodyLarge.copy(
                                         color = OneUiTheme.colors.textSecondary,
                                         fontSize = 15.sp
@@ -940,14 +1210,14 @@ fun OneUiSearchAndFilterScreen(
                         }
                     )
 
-                    if (searchQuery.isNotEmpty()) {
+                    if (filterState.query.isNotEmpty()) {
                         IconButton(
-                            onClick = { onSearchQueryChange("") },
+                            onClick = { viewModel.setSearchQuery("") },
                             modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Clear",
+                                contentDescription = "Clear search",
                                 tint = OneUiTheme.colors.textSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
@@ -959,7 +1229,7 @@ fun OneUiSearchAndFilterScreen(
                             tint = OneUiTheme.colors.textPrimary,
                             modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.width(14.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Icon(
                             imageVector = Icons.Default.MoreVert,
                             contentDescription = "Options",

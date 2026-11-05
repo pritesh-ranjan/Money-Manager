@@ -53,6 +53,7 @@ fun InsightsScreen(
     val monthlySubsTotal by viewModel.monthlySubscriptionsTotal.collectAsState()
     val monthlyTransfersTotal by viewModel.monthlyRecurringTransfersTotal.collectAsState()
     val allTransactions by viewModel.allTransactionsUnfiltered.collectAsState()
+    val categoriesMap by viewModel.categoriesMap.collectAsState()
 
     var selectedFilter by remember { mutableStateOf(InsightsFilter.ALL) }
     var drillDownInsight by remember { mutableStateOf<InsightWithTransactions?>(null) }
@@ -208,6 +209,7 @@ fun InsightsScreen(
         InsightTransactionsSheet(
             item = item,
             allTransactions = allTransactions,
+            categoriesMap = categoriesMap,
             onDismiss = { drillDownInsight = null },
             onEditTransaction = { tx ->
                 drillDownInsight = null
@@ -731,6 +733,7 @@ private fun ConfidencePillarRow(name: String, score: Double) {
 private fun InsightTransactionsSheet(
     item: InsightWithTransactions,
     allTransactions: List<TransactionWithDetails>,
+    categoriesMap: Map<String, CategoryEntity> = emptyMap(),
     onDismiss: () -> Unit,
     onEditTransaction: (TransactionWithDetails) -> Unit
 ) {
@@ -800,50 +803,16 @@ private fun InsightTransactionsSheet(
 
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(linkedTransactions, key = { it.transaction.uid }) { txWithDetails ->
-                    val tx = txWithDetails.transaction
-                    val fmt = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a")
-                    val dateStr = Instant.ofEpochMilli(tx.timestamp).atZone(ZoneId.systemDefault()).format(fmt)
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { onEditTransaction(txWithDetails) },
-                        color = OneUiTheme.colors.surfaceElevated,
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = tx.note.ifBlank { txWithDetails.category?.name ?: "Transaction" },
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = OneUiTheme.colors.textPrimary
-                                )
-                                Text(
-                                    text = "${txWithDetails.account.name} · $dateStr",
-                                    fontSize = 11.sp,
-                                    color = OneUiTheme.colors.textMuted
-                                )
-                            }
-
-                            Text(
-                                text = "₹${CurrencyFormatter.formatIndianNumber(tx.baseAmount, decimals = 2)}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (tx.type == TransactionType.INCOME) OneUiTheme.colors.income else OneUiTheme.colors.textPrimary
-                            )
-                        }
-                    }
+                    OneUiTransactionRowItem(
+                        item = txWithDetails,
+                        categoriesMap = categoriesMap,
+                        showDate = true,
+                        onClick = { onEditTransaction(txWithDetails) }
+                    )
+                    OneUiInsetDivider(startIndent = 18.dp)
                 }
             }
         }

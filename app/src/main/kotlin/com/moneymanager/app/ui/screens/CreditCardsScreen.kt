@@ -36,6 +36,7 @@ import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
+import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.domain.CreditCardCycleSummary
 import com.moneymanager.app.domain.CurrencyFormatter
@@ -77,6 +78,7 @@ fun CreditCardsScreen(
     val manualCardSummaries by viewModel.creditCards.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
+    val categoriesMap by viewModel.categoriesMap.collectAsState()
 
     // Direct PDF Statement Importer State
     var pendingPdfUri by remember { mutableStateOf<Uri?>(null) }
@@ -785,83 +787,28 @@ fun CreditCardsScreen(
                         }
                     } else {
                         groupedSpends.forEach { (date, txList) ->
+                            val dayIncome = txList.filter { it.transaction.type == TransactionType.INCOME }
+                                .sumOf { it.transaction.baseAmount }
+                            val dayExpense = txList.filter { it.transaction.type == TransactionType.EXPENSE }
+                                .sumOf { it.transaction.baseAmount }
+
+                            item(key = "spends_day_header_$date") {
+                                OneUiDayHeader(date = date, dayIncome = dayIncome, dayExpense = dayExpense)
+                            }
+
                             item(key = "day_group_$date") {
                                 OneUiCard {
-                                    val dateLabel = when (date) {
-                                        LocalDate.now() -> "Today"
-                                        LocalDate.now().minusDays(1) -> "Yesterday"
-                                        else -> date.format(fullDateFormatter)
-                                    }
-                                    Text(
-                                        text = dateLabel,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = OneUiTheme.colors.textSecondary,
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 13.sp
-                                        )
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    OneUiInsetDivider(startIndent = 0.dp)
-
                                     txList.forEachIndexed { index, item ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .clickable { onEditTransaction?.invoke(item) }
-                                                .padding(vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(38.dp)
-                                                    .clip(CircleShape)
-                                                    .background(OneUiTheme.colors.surfaceElevated),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    text = item.category?.icon ?: "💳",
-                                                    fontSize = 18.sp
-                                                )
-                                            }
-
-                                            Spacer(modifier = Modifier.width(14.dp))
-
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = if (item.transaction.note.isNotBlank()) item.transaction.note else item.category?.name ?: "Card Spend",
-                                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                                        fontWeight = FontWeight.Normal,
-                                                        color = OneUiTheme.colors.textPrimary,
-                                                        fontSize = 15.sp
-                                                    ),
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                                Text(
-                                                    text = "${item.account.name} • ${item.category?.name ?: "Expense"}",
-                                                    style = MaterialTheme.typography.bodySmall.copy(
-                                                        color = OneUiTheme.colors.textSecondary,
-                                                        fontSize = 12.5.sp
-                                                    ),
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-
-                                            Text(
-                                                text = "-₹${CurrencyFormatter.formatIndianNumber(item.transaction.accountAmount)}",
-                                                style = MaterialTheme.typography.bodyLarge.copy(
-                                                    fontWeight = FontWeight.Normal,
-                                                    color = OneUiTheme.colors.expense,
-                                                    fontSize = 14.5.sp
-                                                )
-                                            )
-                                        }
+                                        OneUiTransactionRowItem(
+                                            item = item,
+                                            categoriesMap = categoriesMap,
+                                            colorIndex = index,
+                                            showDate = false,
+                                            onClick = { onEditTransaction?.invoke(item) }
+                                        )
 
                                         if (index < txList.lastIndex) {
-                                            OneUiInsetDivider(startIndent = 52.dp)
+                                            OneUiInsetDivider(startIndent = 18.dp)
                                         }
                                     }
                                 }

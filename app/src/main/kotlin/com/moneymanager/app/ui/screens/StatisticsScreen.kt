@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.domain.CurrencyFormatter
@@ -82,7 +83,8 @@ data class BarDayBucket(
 @Composable
 fun StatisticsScreen(
     viewModel: MainViewModel,
-    onOpenInsights: () -> Unit = {}
+    onOpenInsights: () -> Unit = {},
+    onEditTransaction: (TransactionWithDetails) -> Unit = {}
 ) {
     val selectedYm by viewModel.selectedYearMonth.collectAsState()
     val allTransactions by viewModel.allTransactionsUnfiltered.collectAsState()
@@ -675,6 +677,8 @@ fun StatisticsScreen(
     selectedCategoryForDetail?.let { statItem ->
         OneUiCategoryDrillDownSheet(
             item = statItem,
+            categoriesMap = categoriesMap,
+            onEditTransaction = onEditTransaction,
             onDismiss = { selectedCategoryForDetail = null }
         )
     }
@@ -683,6 +687,7 @@ fun StatisticsScreen(
     selectedStoryInsightForDrillDown?.let { insight ->
         OneUiStoryDrillDownSheet(
             insight = insight,
+            onEditTransaction = onEditTransaction,
             onDismiss = { selectedStoryInsightForDrillDown = null }
         )
     }
@@ -915,6 +920,8 @@ fun OneUiSegmentedBarChart(
 @Composable
 fun OneUiCategoryDrillDownSheet(
     item: CategoryStatItem,
+    categoriesMap: Map<String, CategoryEntity> = emptyMap(),
+    onEditTransaction: ((TransactionWithDetails) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1028,16 +1035,11 @@ fun OneUiCategoryDrillDownSheet(
                     .heightIn(max = 320.dp)
             ) {
                 items(item.transactions, key = { it.transaction.uid }) { txItem ->
-                    val dateStr = Instant.ofEpochMilli(txItem.transaction.timestamp)
-                        .atZone(ZoneId.systemDefault())
-                        .toLocalDate()
-                        .format(DateTimeFormatter.ofPattern("dd MMM yyyy"))
-
-                    OneUiVerticalAccentRow(
-                        title = txItem.transaction.note.ifBlank { item.rootCategoryName },
-                        subtitle = "$dateStr • ${txItem.account.name}",
-                        valueText = "₹" + CurrencyFormatter.formatIndianNumber(abs(txItem.transaction.baseAmount)),
-                        accentColor = item.color
+                    OneUiTransactionRowItem(
+                        item = txItem,
+                        categoriesMap = categoriesMap,
+                        showDate = true,
+                        onClick = { onEditTransaction?.invoke(txItem) }
                     )
                     OneUiInsetDivider(startIndent = 18.dp)
                 }

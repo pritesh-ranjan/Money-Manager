@@ -378,23 +378,29 @@ object SqliteBackupManager {
         // Accounts
         val accounts = mutableListOf<AccountEntity>()
         if (hasTable(db, "ASSETS")) {
-            val queryCols = if (hasColumn(db, "ASSETS", "ZDATA")) {
-                "SELECT uid, NIC_NAME, groupUid, currencyUid, CARD_DAY_FIN, CARD_DAY_PAY, cardAssetUid, ORDERSEQ, ZDATA FROM ASSETS WHERE A_UTIME IS NOT NULL"
-            } else {
-                "SELECT uid, NIC_NAME, groupUid, currencyUid, CARD_DAY_FIN, CARD_DAY_PAY, cardAssetUid, ORDERSEQ FROM ASSETS WHERE A_UTIME IS NOT NULL"
-            }
-            db.rawQuery(queryCols, null).use { cursor ->
+            db.rawQuery("SELECT * FROM ASSETS WHERE A_UTIME IS NOT NULL", null).use { cursor ->
+                val uidIdx = cursor.getColumnIndex("uid")
+                val nameIdx = cursor.getColumnIndex("NIC_NAME")
+                val groupUidIdx = cursor.getColumnIndex("groupUid")
+                val currUidIdx = cursor.getColumnIndex("currencyUid")
+                val cardDayFinIdx = cursor.getColumnIndex("CARD_DAY_FIN")
+                val cardDayPayIdx = cursor.getColumnIndex("CARD_DAY_PAY")
+                val cardAssetUidIdx = cursor.getColumnIndex("cardAssetUid")
+                val orderIdx = cursor.getColumnIndex("ORDERSEQ")
                 val zdataIdx = cursor.getColumnIndex("ZDATA")
+
                 while (cursor.moveToNext()) {
-                    val uid = cursor.getString(0) ?: continue
-                    val name = cursor.getString(1) ?: "Account"
-                    val groupUid = cursor.getString(2) ?: ""
-                    val currUid = cursor.getString(3) ?: mainCurrencyUid
-                    val cardDayFin = cursor.getString(4)?.toIntOrNull()
-                    val cardDayPay = cursor.getString(5)?.toIntOrNull()
-                    val cardAssetUid = cursor.getString(6)
-                    val order = cursor.getInt(7)
-                    val isHiddenOrClosed = if (zdataIdx >= 0) cursor.getString(zdataIdx) == "1" else false
+                    val uid = (if (uidIdx >= 0) cursor.getString(uidIdx) else null) ?: continue
+                    val name = (if (nameIdx >= 0) cursor.getString(nameIdx) else null) ?: "Account"
+                    val groupUid = (if (groupUidIdx >= 0) cursor.getString(groupUidIdx) else null) ?: ""
+                    val currUid = (if (currUidIdx >= 0) cursor.getString(currUidIdx) else null) ?: mainCurrencyUid
+                    val cardDayFin = if (cardDayFinIdx >= 0) cursor.getString(cardDayFinIdx)?.toIntOrNull() else null
+                    val cardDayPay = if (cardDayPayIdx >= 0) cursor.getString(cardDayPayIdx)?.toIntOrNull() else null
+                    val cardAssetUid = if (cardAssetUidIdx >= 0) cursor.getString(cardAssetUidIdx) else null
+                    val order = if (orderIdx >= 0) cursor.getInt(orderIdx) else 0
+
+                    val zdataVal = if (zdataIdx >= 0 && !cursor.isNull(zdataIdx)) cursor.getString(zdataIdx)?.trim() else null
+                    val isHiddenOrClosed = zdataVal == "1"
 
                     val groupType = groupTypeMap[groupUid] ?: 0
                     val groupName = groupNameMap[groupUid] ?: ""
@@ -423,6 +429,7 @@ object SqliteBackupManager {
                             paymentDueDay = if (accountType == AccountType.CREDIT_CARD) cardDayPay else null,
                             settlementAccountUid = cardAssetUid,
                             linkedParentAccountUid = cardAssetUid,
+                            includeInNetWorth = !isHiddenOrClosed,
                             isArchived = isHiddenOrClosed,
                             sortOrder = order
                         )
@@ -633,15 +640,9 @@ object SqliteBackupManager {
 
     private fun hasColumn(db: SQLiteDatabase, tableName: String, columnName: String): Boolean {
         return try {
-            db.rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
-                val nameIdx = cursor.getColumnIndex("name")
-                while (cursor.moveToNext()) {
-                    if (nameIdx >= 0 && cursor.getString(nameIdx).equals(columnName, ignoreCase = true)) {
-                        return true
-                    }
-                }
+            db.rawQuery("SELECT * FROM `$tableName` LIMIT 0", null).use { cursor ->
+                cursor.getColumnIndex(columnName) >= 0
             }
-            false
         } catch (_: Exception) {
             false
         }

@@ -212,11 +212,21 @@ fun MainScreen(
 
                     BottomTab.STATS -> StatisticsScreen(
                         viewModel = viewModel,
-                        onOpenInsights = { showInsightsScreen = true }
+                        onOpenInsights = { showInsightsScreen = true },
+                        onEditTransaction = { item ->
+                            editingTransaction = item
+                            initialSheetType = item.transaction.type
+                            showAddTransactionSheet = true
+                        }
                     )
 
                     BottomTab.ACCOUNTS -> AccountsScreen(
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        onEditTransaction = { item ->
+                            editingTransaction = item
+                            initialSheetType = item.transaction.type
+                            showAddTransactionSheet = true
+                        }
                     )
 
                     BottomTab.CREDIT_CARDS -> CreditCardsScreen(

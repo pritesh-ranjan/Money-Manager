@@ -75,6 +75,46 @@ sealed class UiMessage {
     data class Error(val message: String) : UiMessage()
 }
 
+enum class DateFilterPreset(val label: String) {
+    YESTERDAY("Yesterday"),
+    PAST_7_DAYS("Past 7 days"),
+    PAST_30_DAYS("Past 30 days"),
+    THIS_MONTH("This month"),
+    CUSTOM("Custom range")
+}
+
+data class TransactionFilterState(
+    val query: String = "",
+    val searchNoteOnly: Boolean = false,
+    val selectedTypes: Set<TransactionType> = emptySet(),
+    val selectedAccountUids: Set<String> = emptySet(),
+    val selectedCategoryUids: Set<String> = emptySet(),
+    val selectedTagUids: Set<String> = emptySet(),
+    val datePreset: DateFilterPreset? = null,
+    val customStartDate: LocalDate? = null,
+    val customEndDate: LocalDate? = null
+) {
+    val hasActiveFilters: Boolean
+        get() = query.isNotBlank() ||
+            selectedTypes.isNotEmpty() ||
+            selectedAccountUids.isNotEmpty() ||
+            selectedCategoryUids.isNotEmpty() ||
+            selectedTagUids.isNotEmpty() ||
+            datePreset != null
+
+    val activeFilterCount: Int
+        get() {
+            var count = 0
+            if (query.isNotBlank()) count++
+            if (selectedTypes.isNotEmpty()) count += selectedTypes.size
+            if (selectedAccountUids.isNotEmpty()) count += selectedAccountUids.size
+            if (selectedCategoryUids.isNotEmpty()) count += selectedCategoryUids.size
+            if (selectedTagUids.isNotEmpty()) count += selectedTagUids.size
+            if (datePreset != null) count++
+            return count
+        }
+}
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application, viewModelScope)
@@ -98,13 +138,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedYearMonth = MutableStateFlow(YearMonth.now())
     val selectedYearMonth: StateFlow<YearMonth> = _selectedYearMonth.asStateFlow()
 
-    // Search query for ledger
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    // Comprehensive Transaction Multi-Criteria Filter State
+    private val _filterState = MutableStateFlow(TransactionFilterState())
+    val filterState: StateFlow<TransactionFilterState> = _filterState.asStateFlow()
 
-    // Filter by tag
-    private val _selectedTag = MutableStateFlow<String?>(null)
-    val selectedTag: StateFlow<String?> = _selectedTag.asStateFlow()
+    // Search query for ledger (synchronized with filterState)
+    val searchQuery: StateFlow<String> = _filterState
+        .map { it.query }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    // Filter by tag (synchronized with filterState)
+    val selectedTag: StateFlow<String?> = _filterState
+        .map { it.selectedTagUids.firstOrNull() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // UI Feedback Message
     private val _uiMessage = MutableStateFlow<UiMessage?>(null)
@@ -360,31 +406,106 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
-    // Month & Search filtered transactions
+    // Multi-criteria & Month filtered transactions
     val transactions: StateFlow<List<TransactionWithDetails>> = combine(
         repository.allTransactions,
         _selectedYearMonth,
-        _searchQuery,
-        _selectedTag
-    ) { allTxs, ym, query, tagFilter ->
+        _filterState
+    ) { allTxs, ym, filter ->
         val zone = ZoneId.systemDefault()
-        val startMillis = ym.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val endMillis = ym.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+        val today = LocalDate.now()
+
+        val (startMillis, endMillis) = when (filter.datePreset) {
+            DateFilterPreset.YESTERDAY -> {
+                val y = today.minusDays(1)
+                Pair(
+                    y.atStartOfDay(zone).toInstant().toEpochMilli(),
+                    y.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                )
+            }
+            DateFilterPreset.PAST_7_DAYS -> {
+                val start = today.minusDays(6)
+                Pair(
+                    start.atStartOfDay(zone).toInstant().toEpochMilli(),
+                    today.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                )
+            }
+            DateFilterPreset.PAST_30_DAYS -> {
+                val start = today.minusDays(29)
+                Pair(
+                    start.atStartOfDay(zone).toInstant().toEpochMilli(),
+                    today.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                )
+            }
+            DateFilterPreset.THIS_MONTH -> {
+                val currentYm = YearMonth.now()
+                Pair(
+                    currentYm.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+                    currentYm.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                )
+            }
+            DateFilterPreset.CUSTOM -> {
+                val start = filter.customStartDate ?: today.minusMonths(1)
+                val end = filter.customEndDate ?: today
+                Pair(
+                    start.atStartOfDay(zone).toInstant().toEpochMilli(),
+                    end.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                )
+            }
+            null -> {
+                Pair(
+                    ym.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+                    ym.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                )
+            }
+        }
 
         allTxs.filter { item ->
-            val matchesMonth = item.transaction.timestamp in startMillis..endMillis
-            val matchesQuery = if (query.isBlank()) true else {
-                item.transaction.note.contains(query, ignoreCase = true) ||
-                item.transaction.description.contains(query, ignoreCase = true) ||
-                item.category?.name?.contains(query, ignoreCase = true) == true ||
-                item.account.name.contains(query, ignoreCase = true) ||
-                item.tags.any { it.name.contains(query, ignoreCase = true) }
-            }
-            val matchesTag = if (tagFilter == null) true else {
-                item.tags.any { it.uid == tagFilter || it.name.equals(tagFilter, ignoreCase = true) }
+            val matchesDate = item.transaction.timestamp in startMillis..endMillis
+            if (!matchesDate) return@filter false
+
+            if (filter.selectedTypes.isNotEmpty() && !filter.selectedTypes.contains(item.transaction.type)) {
+                return@filter false
             }
 
-            matchesMonth && matchesQuery && matchesTag
+            if (filter.selectedAccountUids.isNotEmpty()) {
+                val inAccount = filter.selectedAccountUids.contains(item.account.uid) ||
+                    (item.toAccount != null && filter.selectedAccountUids.contains(item.toAccount.uid))
+                if (!inAccount) return@filter false
+            }
+
+            if (filter.selectedCategoryUids.isNotEmpty()) {
+                val cat = item.category
+                val catUid = cat?.uid
+                val parentCatUid = cat?.parentUid
+                val matchesCategory = (catUid != null && filter.selectedCategoryUids.contains(catUid)) ||
+                    (parentCatUid != null && filter.selectedCategoryUids.contains(parentCatUid))
+                if (!matchesCategory) return@filter false
+            }
+
+            if (filter.selectedTagUids.isNotEmpty()) {
+                val hasTag = item.tags.any {
+                    filter.selectedTagUids.contains(it.uid) || filter.selectedTagUids.contains(it.name)
+                }
+                if (!hasTag) return@filter false
+            }
+
+            if (filter.query.isNotBlank()) {
+                val q = filter.query.trim()
+                if (filter.searchNoteOnly) {
+                    if (!item.transaction.note.contains(q, ignoreCase = true)) return@filter false
+                } else {
+                    val matchesQuery = item.transaction.note.contains(q, ignoreCase = true) ||
+                        item.transaction.description.contains(q, ignoreCase = true) ||
+                        item.category?.name?.contains(q, ignoreCase = true) == true ||
+                        item.account.name.contains(q, ignoreCase = true) ||
+                        (item.toAccount?.name?.contains(q, ignoreCase = true) == true) ||
+                        item.tags.any { it.name.contains(q, ignoreCase = true) }
+                    if (!matchesQuery) return@filter false
+                }
+            }
+
+            true
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -401,11 +522,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSearchQuery(q: String) {
-        _searchQuery.value = q
+        _filterState.value = _filterState.value.copy(query = q)
     }
 
     fun setSelectedTag(tag: String?) {
-        _selectedTag.value = tag
+        _filterState.value = _filterState.value.copy(
+            selectedTagUids = if (tag != null) setOf(tag) else emptySet()
+        )
+    }
+
+    fun setFilterState(filter: TransactionFilterState) {
+        _filterState.value = filter
+    }
+
+    fun updateFilterState(block: (TransactionFilterState) -> TransactionFilterState) {
+        _filterState.value = block(_filterState.value)
+    }
+
+    fun clearAllFilters() {
+        _filterState.value = TransactionFilterState()
+    }
+
+    fun toggleFilterType(type: TransactionType) {
+        updateFilterState { state ->
+            val newTypes = if (state.selectedTypes.contains(type)) {
+                state.selectedTypes - type
+            } else {
+                state.selectedTypes + type
+            }
+            state.copy(selectedTypes = newTypes)
+        }
+    }
+
+    fun toggleFilterAccount(accountUid: String) {
+        updateFilterState { state ->
+            val newAccounts = if (state.selectedAccountUids.contains(accountUid)) {
+                state.selectedAccountUids - accountUid
+            } else {
+                state.selectedAccountUids + accountUid
+            }
+            state.copy(selectedAccountUids = newAccounts)
+        }
+    }
+
+    fun toggleFilterCategory(categoryUid: String) {
+        updateFilterState { state ->
+            val newCats = if (state.selectedCategoryUids.contains(categoryUid)) {
+                state.selectedCategoryUids - categoryUid
+            } else {
+                state.selectedCategoryUids + categoryUid
+            }
+            state.copy(selectedCategoryUids = newCats)
+        }
+    }
+
+    fun toggleFilterTag(tagUid: String) {
+        updateFilterState { state ->
+            val newTags = if (state.selectedTagUids.contains(tagUid)) {
+                state.selectedTagUids - tagUid
+            } else {
+                state.selectedTagUids + tagUid
+            }
+            state.copy(selectedTagUids = newTags)
+        }
+    }
+
+    fun setDatePreset(preset: DateFilterPreset?) {
+        updateFilterState { it.copy(datePreset = preset) }
+    }
+
+    fun setCustomDateRange(start: LocalDate?, end: LocalDate?) {
+        updateFilterState {
+            it.copy(datePreset = DateFilterPreset.CUSTOM, customStartDate = start, customEndDate = end)
+        }
+    }
+
+    fun setSearchNoteOnly(noteOnly: Boolean) {
+        updateFilterState { it.copy(searchNoteOnly = noteOnly) }
     }
 
     fun clearUiMessage() {

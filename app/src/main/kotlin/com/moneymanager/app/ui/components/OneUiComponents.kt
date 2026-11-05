@@ -43,7 +43,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.moneymanager.app.ui.theme.OneUiTheme
+import com.moneymanager.app.ui.theme.StatsPieColors
+import com.moneymanager.app.data.local.entity.CategoryEntity
+import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.TransactionWithDetails
+import com.moneymanager.app.domain.CurrencyFormatter
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlin.math.abs
 
 val OneUiCardShape = RoundedCornerShape(26.dp)
 val OneUiDialogShape = RoundedCornerShape(28.dp)
@@ -1191,6 +1201,289 @@ fun OneUiBottomDialog(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * One UI Day Header matching Realbyte reference screenshot.
+ * Displays bold day of month (e.g. "27"), weekday pill badge (e.g. "Tue"),
+ * date (e.g. "10.2026"), and right-aligned day Income & Expense totals.
+ */
+@Composable
+fun OneUiDayHeader(
+    date: LocalDate,
+    dayIncome: Double,
+    dayExpense: Double
+) {
+    val dayOfWeek = date.dayOfWeek
+    val dayLetter = dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+    val isToday = date == LocalDate.now()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Day number
+        Text(
+            text = "${date.dayOfMonth}",
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.Bold,
+                color = OneUiTheme.colors.textPrimary,
+                fontSize = 20.sp
+            )
+        )
+
+        Spacer(modifier = Modifier.width(6.dp))
+
+        // Weekday pill
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(
+                    if (isToday) OneUiTheme.colors.primaryAccent else OneUiTheme.colors.surfaceElevated
+                )
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = dayLetter,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    color = if (isToday) Color.White else OneUiTheme.colors.textPrimary,
+                    fontSize = 11.sp
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.width(6.dp))
+
+        Text(
+            text = if (isToday) "Today" else date.format(DateTimeFormatter.ofPattern("MM.yyyy", Locale.getDefault())),
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = OneUiTheme.colors.textMuted,
+                fontSize = 12.sp
+            )
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        if (dayIncome > 0) {
+            Text(
+                text = "+₹" + CurrencyFormatter.formatIndianNumber(dayIncome),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    color = OneUiTheme.colors.income,
+                    fontSize = 13.sp
+                ),
+                modifier = Modifier.padding(end = 12.dp)
+            )
+        }
+
+        if (dayExpense > 0) {
+            Text(
+                text = "-₹" + CurrencyFormatter.formatIndianNumber(dayExpense),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    color = OneUiTheme.colors.expense,
+                    fontSize = 13.sp
+                )
+            )
+        }
+    }
+}
+
+/**
+ * Unified 3-Column Transaction Row Item matching the Realbyte layout & One UI 9 styling.
+ * Column 1 (Left): Category & Subcategory
+ * Column 2 (Middle): Note + Description + Tags (top line), Account route (bottom line)
+ * Column 3 (Right): Amount
+ */
+@Composable
+fun OneUiTransactionRowItem(
+    item: TransactionWithDetails,
+    categoriesMap: Map<String, CategoryEntity> = emptyMap(),
+    colorIndex: Int = 0,
+    showDate: Boolean = false,
+    onClick: () -> Unit
+) {
+    val tx = item.transaction
+    val cat = item.category
+    val parentCat = if (cat?.parentUid != null) categoriesMap[cat.parentUid] else null
+    val rootCategoryName = when {
+        parentCat != null -> parentCat.name
+        cat != null -> cat.name
+        tx.type == TransactionType.TRANSFER -> "Transfer"
+        tx.type == TransactionType.ADJUSTMENT -> "Adjustment"
+        else -> "Uncategorized"
+    }
+    val subCategoryName = if (parentCat != null) cat?.name else null
+
+    val barColor = when (tx.type) {
+        TransactionType.INCOME -> OneUiTheme.colors.income
+        TransactionType.TRANSFER -> OneUiTheme.colors.secondaryCyan
+        TransactionType.ADJUSTMENT -> OneUiTheme.colors.warning
+        TransactionType.EXPENSE -> StatsPieColors[abs(rootCategoryName.hashCode()) % StatsPieColors.size]
+    }
+
+    val amountColor = when (tx.type) {
+        TransactionType.INCOME -> OneUiTheme.colors.income
+        TransactionType.EXPENSE -> OneUiTheme.colors.expense
+        TransactionType.TRANSFER -> OneUiTheme.colors.primaryAccent
+        TransactionType.ADJUSTMENT -> OneUiTheme.colors.warning
+    }
+
+    val accountLabel = if (tx.type == TransactionType.TRANSFER && item.toAccount != null) {
+        "${item.account.name} → ${item.toAccount.name}"
+    } else {
+        item.account.name
+    }
+
+    val prefix = when (tx.type) {
+        TransactionType.INCOME -> "+₹"
+        TransactionType.EXPENSE -> "-₹"
+        else -> "₹"
+    }
+
+    val displayTitle = when {
+        tx.note.isNotBlank() && tx.description.isNotBlank() -> "${tx.note} ${tx.description}"
+        tx.note.isNotBlank() -> tx.note
+        tx.description.isNotBlank() -> tx.description
+        tx.type == TransactionType.TRANSFER && item.toAccount != null -> "${item.account.name} → ${item.toAccount.name}"
+        else -> rootCategoryName
+    }
+
+    val bottomSubtitle = if (showDate) {
+        val dateStr = Instant.ofEpochMilli(tx.timestamp)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+            .format(DateTimeFormatter.ofPattern("dd MMM", Locale.getDefault()))
+        "$dateStr • $accountLabel"
+    } else {
+        accountLabel
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Vertical Colored Accent Pill (One UI signature)
+        Box(
+            modifier = Modifier
+                .width(3.2.dp)
+                .height(28.dp)
+                .clip(CircleShape)
+                .background(barColor)
+        )
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // Column 1: Category & Subcategory (88.dp width)
+        Column(
+            modifier = Modifier.width(88.dp)
+        ) {
+            Text(
+                text = rootCategoryName,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = OneUiTheme.colors.textSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!subCategoryName.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(1.dp))
+                Text(
+                    text = subCategoryName,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = OneUiTheme.colors.textMuted,
+                        fontSize = 10.5.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(10.dp))
+
+        // Column 2: Note + Description (+ Tags) on top, Account on bottom
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = displayTitle,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = OneUiTheme.colors.textPrimary,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Normal
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+
+                if (item.tags.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = item.tags.joinToString(" ") { "#${it.name}" },
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = OneUiTheme.colors.primaryAccent,
+                            fontSize = 11.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(1.5.dp))
+
+            Text(
+                text = bottomSubtitle,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = OneUiTheme.colors.textSecondary,
+                    fontSize = 11.5.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Spacer(modifier = Modifier.width(10.dp))
+
+        // Column 3: Amount
+        Column(
+            horizontalAlignment = Alignment.End
+        ) {
+            Text(
+                text = prefix + CurrencyFormatter.formatIndianNumber(abs(tx.baseAmount)),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    color = amountColor,
+                    fontSize = 14.sp
+                )
+            )
+            if (!item.currency.isMainCurrency) {
+                Text(
+                    text = "${item.currency.symbol} ${CurrencyFormatter.formatIndianNumber(abs(tx.accountAmount))}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = OneUiTheme.colors.textMuted,
+                        fontSize = 10.5.sp
+                    )
+                )
             }
         }
     }
