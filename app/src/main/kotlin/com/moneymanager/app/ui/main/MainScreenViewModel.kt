@@ -554,6 +554,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setFilterTypes(types: Set<TransactionType>) {
+        updateFilterState { it.copy(selectedTypes = types) }
+    }
+
     fun toggleFilterAccount(accountUid: String) {
         updateFilterState { state ->
             val newAccounts = if (state.selectedAccountUids.contains(accountUid)) {
@@ -563,6 +567,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             state.copy(selectedAccountUids = newAccounts)
         }
+    }
+
+    fun setFilterAccounts(accountUids: Set<String>) {
+        updateFilterState { it.copy(selectedAccountUids = accountUids) }
     }
 
     fun toggleFilterCategory(categoryUid: String) {
@@ -576,6 +584,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setFilterCategories(categoryUids: Set<String>) {
+        updateFilterState { it.copy(selectedCategoryUids = categoryUids) }
+    }
+
     fun toggleFilterTag(tagUid: String) {
         updateFilterState { state ->
             val newTags = if (state.selectedTagUids.contains(tagUid)) {
@@ -585,6 +597,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             state.copy(selectedTagUids = newTags)
         }
+    }
+
+    fun setFilterTags(tagUids: Set<String>) {
+        updateFilterState { it.copy(selectedTagUids = tagUids) }
     }
 
     fun setDatePreset(preset: DateFilterPreset?) {

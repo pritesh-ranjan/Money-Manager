@@ -17,9 +17,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -327,48 +330,57 @@ fun TransactionsScreen(
                                 }
                             )
                         }
-                        filterState.selectedAccountUids.forEach { accUid ->
-                            val accName = allAccounts.firstOrNull { it.account.uid == accUid }?.account?.name ?: "Account"
+                        if (filterState.selectedAccountUids.isNotEmpty()) {
+                            val names = filterState.selectedAccountUids.mapNotNull { uid ->
+                                allAccounts.firstOrNull { it.account.uid == uid }?.account?.name
+                            }
+                            val label = FilterSummaryFormatter.compactChipLabel(names, "account", "accounts")
                             OneUiCapsuleChip(
-                                label = accName,
+                                label = label,
                                 selected = true,
-                                onClick = { viewModel.toggleFilterAccount(accUid) },
+                                onClick = { viewModel.setFilterAccounts(emptySet()) },
                                 trailingIcon = {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Clear",
+                                        contentDescription = "Clear accounts",
                                         tint = Color.White,
                                         modifier = Modifier.size(13.dp)
                                     )
                                 }
                             )
                         }
-                        filterState.selectedCategoryUids.forEach { catUid ->
-                            val catName = categoriesMap[catUid]?.name ?: "Category"
+                        if (filterState.selectedCategoryUids.isNotEmpty()) {
+                            val names = filterState.selectedCategoryUids.mapNotNull { uid ->
+                                categoriesMap[uid]?.name
+                            }
+                            val label = FilterSummaryFormatter.compactChipLabel(names, "category", "categories")
                             OneUiCapsuleChip(
-                                label = catName,
+                                label = label,
                                 selected = true,
-                                onClick = { viewModel.toggleFilterCategory(catUid) },
+                                onClick = { viewModel.setFilterCategories(emptySet()) },
                                 trailingIcon = {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Clear",
+                                        contentDescription = "Clear categories",
                                         tint = Color.White,
                                         modifier = Modifier.size(13.dp)
                                     )
                                 }
                             )
                         }
-                        filterState.selectedTagUids.forEach { tagUid ->
-                            val tagName = allTags.firstOrNull { it.uid == tagUid }?.name ?: tagUid
+                        if (filterState.selectedTagUids.isNotEmpty()) {
+                            val names = filterState.selectedTagUids.mapNotNull { uid ->
+                                allTags.firstOrNull { it.uid == uid }?.name ?: uid
+                            }
+                            val label = if (names.size == 1) "#${names.first()}" else "${names.size} tags"
                             OneUiCapsuleChip(
-                                label = "#$tagName",
+                                label = label,
                                 selected = true,
-                                onClick = { viewModel.toggleFilterTag(tagUid) },
+                                onClick = { viewModel.setFilterTags(emptySet()) },
                                 trailingIcon = {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Clear",
+                                        contentDescription = "Clear tags",
                                         tint = Color.White,
                                         modifier = Modifier.size(13.dp)
                                     )
@@ -671,9 +683,15 @@ private fun OneUiLegendMetricRow(
     }
 }
 
+private enum class FilterSheetType {
+    ACCOUNTS,
+    CATEGORIES,
+    TAGS
+}
+
 /**
  * Dedicated One UI 9 Multi-Criteria Search & Filter Screen.
- * Strictly adheres to Samsung One UI 9 design specifications (Reference Screenshot 3).
+ * Strictly adheres to Samsung One UI 9 design specifications.
  * Allows filtering simultaneously by Date Range, Type, Account, Category/Subcategory, Tags, and Note query.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -693,21 +711,26 @@ fun OneUiSearchAndFilterScreen(
     val incomeCategories by viewModel.incomeCategories.collectAsState()
 
     var filtersExpanded by remember { mutableStateOf(true) }
+    var activeFilterSheet by remember { mutableStateOf<FilterSheetType?>(null) }
     val focusRequester = remember { FocusRequester() }
 
     BackHandler(onBack = onBack)
 
-    val allRootCategories = remember(expenseCategories, incomeCategories) {
-        val rootList = mutableListOf<CategoryEntity>()
-        rootList.addAll(expenseCategories.map { it.category })
-        rootList.addAll(incomeCategories.map { it.category })
-        rootList.distinctBy { it.uid }
+    val selectedAccountNames = remember(filterState.selectedAccountUids, allAccounts) {
+        filterState.selectedAccountUids.mapNotNull { uid ->
+            allAccounts.firstOrNull { it.account.uid == uid }?.account?.name
+        }
     }
 
-    val selectedRootWithSubcategories = remember(filterState.selectedCategoryUids, expenseCategories, incomeCategories) {
-        val allCatsWithSubs = expenseCategories + incomeCategories
-        allCatsWithSubs.filter { catWithSub ->
-            filterState.selectedCategoryUids.contains(catWithSub.category.uid) && catWithSub.subcategories.isNotEmpty()
+    val selectedCategoryNames = remember(filterState.selectedCategoryUids, categoriesMap) {
+        filterState.selectedCategoryUids.mapNotNull { uid ->
+            categoriesMap[uid]?.name
+        }
+    }
+
+    val selectedTagNames = remember(filterState.selectedTagUids, allTags) {
+        filterState.selectedTagUids.mapNotNull { uid ->
+            allTags.firstOrNull { it.uid == uid }?.name ?: uid
         }
     }
 
@@ -774,7 +797,7 @@ fun OneUiSearchAndFilterScreen(
 
             if (filterState.hasActiveFilters) {
                 OneUiTextActionLink(
-                    text = "Clear all",
+                    text = "Reset",
                     onClick = { viewModel.clearAllFilters() }
                 )
             }
@@ -795,224 +818,11 @@ fun OneUiSearchAndFilterScreen(
                     enter = fadeIn() + expandVertically(),
                     exit = fadeOut() + shrinkVertically()
                 ) {
-                    OneUiCard {
-                        // 1. Time Presets
-                        Text(
-                            text = "Time",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = OneUiTheme.colors.textSecondary,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val timePresets = listOf(
-                                DateFilterPreset.YESTERDAY,
-                                DateFilterPreset.PAST_7_DAYS,
-                                DateFilterPreset.PAST_30_DAYS,
-                                DateFilterPreset.THIS_MONTH,
-                                DateFilterPreset.CUSTOM
-                            )
-                            timePresets.forEach { preset ->
-                                val isSelected = filterState.datePreset == preset
-                                OneUiCapsuleChip(
-                                    label = preset.label,
-                                    selected = isSelected,
-                                    onClick = {
-                                        viewModel.setDatePreset(if (isSelected) null else preset)
-                                    }
-                                )
-                            }
-                        }
-
-                        // Custom Date Range Pickers (if Custom is selected)
-                        if (filterState.datePreset == DateFilterPreset.CUSTOM) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val cal = Calendar.getInstance()
-                                val startStr = filterState.customStartDate?.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) ?: "Start Date"
-                                val endStr = filterState.customEndDate?.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) ?: "End Date"
-
-                                OneUiPillButton(
-                                    text = startStr,
-                                    onClick = {
-                                        DatePickerDialog(
-                                            context,
-                                            { _, y, m, d ->
-                                                viewModel.setCustomDateRange(LocalDate.of(y, m + 1, d), filterState.customEndDate)
-                                            },
-                                            cal.get(Calendar.YEAR),
-                                            cal.get(Calendar.MONTH),
-                                            cal.get(Calendar.DAY_OF_MONTH)
-                                        ).show()
-                                    },
-                                    containerColor = OneUiTheme.colors.surfaceElevated,
-                                    contentColor = OneUiTheme.colors.textPrimary,
-                                    modifier = Modifier.weight(1f)
-                                )
-
-                                Text("to", color = OneUiTheme.colors.textSecondary, fontSize = 12.sp)
-
-                                OneUiPillButton(
-                                    text = endStr,
-                                    onClick = {
-                                        DatePickerDialog(
-                                            context,
-                                            { _, y, m, d ->
-                                                viewModel.setCustomDateRange(filterState.customStartDate, LocalDate.of(y, m + 1, d))
-                                            },
-                                            cal.get(Calendar.YEAR),
-                                            cal.get(Calendar.MONTH),
-                                            cal.get(Calendar.DAY_OF_MONTH)
-                                        ).show()
-                                    },
-                                    containerColor = OneUiTheme.colors.surfaceElevated,
-                                    contentColor = OneUiTheme.colors.textPrimary,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                        OneUiInsetDivider(startIndent = 0.dp)
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // 2. Transaction Type
-                        Text(
-                            text = "Type",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = OneUiTheme.colors.textSecondary,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            TransactionType.values().forEach { type ->
-                                val isSelected = filterState.selectedTypes.contains(type)
-                                OneUiCapsuleChip(
-                                    label = type.displayName,
-                                    selected = isSelected,
-                                    onClick = { viewModel.toggleFilterType(type) }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                        OneUiInsetDivider(startIndent = 0.dp)
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // 3. Accounts
-                        Text(
-                            text = "Accounts",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = OneUiTheme.colors.textSecondary,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            allAccounts.forEach { accItem ->
-                                val isSelected = filterState.selectedAccountUids.contains(accItem.account.uid)
-                                OneUiCapsuleChip(
-                                    label = accItem.account.name,
-                                    selected = isSelected,
-                                    onClick = { viewModel.toggleFilterAccount(accItem.account.uid) }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                        OneUiInsetDivider(startIndent = 0.dp)
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // 4. Categories & Subcategories
-                        Text(
-                            text = "Categories",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = OneUiTheme.colors.textSecondary,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 13.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            allRootCategories.forEach { cat ->
-                                val isSelected = filterState.selectedCategoryUids.contains(cat.uid)
-                                OneUiCapsuleChip(
-                                    label = cat.name,
-                                    selected = isSelected,
-                                    onClick = { viewModel.toggleFilterCategory(cat.uid) }
-                                )
-                            }
-                        }
-
-                        // Subcategory drill-down chips if parent is selected
-                        if (selectedRootWithSubcategories.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            selectedRootWithSubcategories.forEach { parentWithSubs ->
-                                Text(
-                                    text = "${parentWithSubs.category.name} subcategories",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = OneUiTheme.colors.primaryAccent,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 8.dp)
-                                ) {
-                                    parentWithSubs.subcategories.forEach { sub ->
-                                        val isSubSelected = filterState.selectedCategoryUids.contains(sub.uid)
-                                        OneUiCapsuleChip(
-                                            label = sub.name,
-                                            selected = isSubSelected,
-                                            onClick = { viewModel.toggleFilterCategory(sub.uid) }
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                            }
-                        }
-
-                        if (allTags.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            OneUiInsetDivider(startIndent = 0.dp)
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            // 5. Tags
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        // Card 1: Time & Type Quick Selectors
+                        OneUiCard {
                             Text(
-                                text = "Tags",
+                                text = "Time",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = OneUiTheme.colors.textSecondary,
                                     fontWeight = FontWeight.Medium,
@@ -1020,45 +830,263 @@ fun OneUiSearchAndFilterScreen(
                                 )
                             )
                             Spacer(modifier = Modifier.height(10.dp))
-                            FlowRow(
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                allTags.forEach { tag ->
-                                    val isSelected = filterState.selectedTagUids.contains(tag.uid)
+                                val timePresets = listOf(
+                                    DateFilterPreset.YESTERDAY,
+                                    DateFilterPreset.PAST_7_DAYS,
+                                    DateFilterPreset.PAST_30_DAYS,
+                                    DateFilterPreset.THIS_MONTH,
+                                    DateFilterPreset.CUSTOM
+                                )
+                                timePresets.forEach { preset ->
+                                    val isSelected = filterState.datePreset == preset
                                     OneUiCapsuleChip(
-                                        label = "#${tag.name}",
+                                        label = preset.label,
                                         selected = isSelected,
-                                        onClick = { viewModel.toggleFilterTag(tag.uid) }
+                                        onClick = {
+                                            viewModel.setDatePreset(if (isSelected) null else preset)
+                                        }
                                     )
                                 }
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(14.dp))
-                        OneUiInsetDivider(startIndent = 0.dp)
-                        Spacer(modifier = Modifier.height(10.dp))
+                            // Custom Date Range Pickers (if Custom is selected)
+                            if (filterState.datePreset == DateFilterPreset.CUSTOM) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val cal = Calendar.getInstance()
+                                    val startStr = filterState.customStartDate?.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) ?: "Start Date"
+                                    val endStr = filterState.customEndDate?.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) ?: "End Date"
 
-                        // 6. Screenshot 3 style switch: "Search by note only"
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.setSearchNoteOnly(!filterState.searchNoteOnly) }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                                    OneUiPillButton(
+                                        text = startStr,
+                                        onClick = {
+                                            DatePickerDialog(
+                                                context,
+                                                { _, y, m, d ->
+                                                    viewModel.setCustomDateRange(LocalDate.of(y, m + 1, d), filterState.customEndDate)
+                                                },
+                                                cal.get(Calendar.YEAR),
+                                                cal.get(Calendar.MONTH),
+                                                cal.get(Calendar.DAY_OF_MONTH)
+                                            ).show()
+                                        },
+                                        containerColor = OneUiTheme.colors.surfaceElevated,
+                                        contentColor = OneUiTheme.colors.textPrimary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+
+                                    Text("to", color = OneUiTheme.colors.textSecondary, fontSize = 12.sp)
+
+                                    OneUiPillButton(
+                                        text = endStr,
+                                        onClick = {
+                                            DatePickerDialog(
+                                                context,
+                                                { _, y, m, d ->
+                                                    viewModel.setCustomDateRange(filterState.customStartDate, LocalDate.of(y, m + 1, d))
+                                                },
+                                                cal.get(Calendar.YEAR),
+                                                cal.get(Calendar.MONTH),
+                                                cal.get(Calendar.DAY_OF_MONTH)
+                                            ).show()
+                                        },
+                                        containerColor = OneUiTheme.colors.surfaceElevated,
+                                        contentColor = OneUiTheme.colors.textPrimary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            OneUiInsetDivider(startIndent = 0.dp)
+                            Spacer(modifier = Modifier.height(14.dp))
+
                             Text(
-                                text = "Search by note only",
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    color = OneUiTheme.colors.textPrimary,
-                                    fontSize = 15.sp
+                                text = "Type",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 13.sp
                                 )
                             )
-                            OneUiSwitch(
-                                checked = filterState.searchNoteOnly,
-                                onCheckedChange = { viewModel.setSearchNoteOnly(it) }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OneUiTypeToggleRow(
+                                selectedTypes = filterState.selectedTypes,
+                                onToggle = { viewModel.toggleFilterType(it) }
+                            )
+                        }
+
+                        // Card 2: Detail Criteria (Accounts, Categories, Tags, Note Only)
+                        OneUiCard {
+                            OneUiFilterSummaryRow(
+                                icon = Icons.Default.AccountBalance,
+                                badgeColor = Color(0xFF2B75FF),
+                                title = "Accounts",
+                                summary = FilterSummaryFormatter.summarizeSelection(selectedAccountNames, "All accounts"),
+                                count = filterState.selectedAccountUids.size,
+                                onClick = { activeFilterSheet = FilterSheetType.ACCOUNTS }
+                            )
+
+                            OneUiInsetDivider(startIndent = 52.dp)
+
+                            OneUiFilterSummaryRow(
+                                icon = Icons.Default.Category,
+                                badgeColor = Color(0xFF5E5CE6),
+                                title = "Categories",
+                                summary = FilterSummaryFormatter.summarizeSelection(selectedCategoryNames, "All categories"),
+                                count = filterState.selectedCategoryUids.size,
+                                onClick = { activeFilterSheet = FilterSheetType.CATEGORIES }
+                            )
+
+                            if (allTags.isNotEmpty()) {
+                                OneUiInsetDivider(startIndent = 52.dp)
+
+                                OneUiFilterSummaryRow(
+                                    icon = Icons.Default.LocalOffer,
+                                    badgeColor = Color(0xFF00B4D8),
+                                    title = "Tags",
+                                    summary = FilterSummaryFormatter.summarizeSelection(selectedTagNames, "Any tag"),
+                                    count = filterState.selectedTagUids.size,
+                                    onClick = { activeFilterSheet = FilterSheetType.TAGS }
+                                )
+                            }
+
+                            OneUiInsetDivider(startIndent = 0.dp)
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.setSearchNoteOnly(!filterState.searchNoteOnly) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Search by note only",
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        color = OneUiTheme.colors.textPrimary,
+                                        fontSize = 15.sp
+                                    )
+                                )
+                                OneUiSwitch(
+                                    checked = filterState.searchNoteOnly,
+                                    onCheckedChange = { viewModel.setSearchNoteOnly(it) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Compact Active Filter Indicator Bar when filters island is collapsed
+            if (!filtersExpanded && filterState.hasActiveFilters) {
+                item(key = "collapsed_active_filters_bar") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (filterState.datePreset != null) {
+                            val dateLabel = if (filterState.datePreset == DateFilterPreset.CUSTOM) {
+                                val s = filterState.customStartDate?.format(DateTimeFormatter.ofPattern("dd MMM")) ?: ""
+                                val e = filterState.customEndDate?.format(DateTimeFormatter.ofPattern("dd MMM")) ?: ""
+                                "$s - $e"
+                            } else {
+                                filterState.datePreset!!.label
+                            }
+                            OneUiCapsuleChip(
+                                label = dateLabel,
+                                selected = true,
+                                onClick = { viewModel.setDatePreset(null) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+
+                        filterState.selectedTypes.forEach { type ->
+                            OneUiCapsuleChip(
+                                label = type.displayName,
+                                selected = true,
+                                onClick = { viewModel.toggleFilterType(type) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+
+                        if (filterState.selectedAccountUids.isNotEmpty()) {
+                            val label = FilterSummaryFormatter.compactChipLabel(selectedAccountNames, "account", "accounts")
+                            OneUiCapsuleChip(
+                                label = label,
+                                selected = true,
+                                onClick = { viewModel.setFilterAccounts(emptySet()) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+
+                        if (filterState.selectedCategoryUids.isNotEmpty()) {
+                            val label = FilterSummaryFormatter.compactChipLabel(selectedCategoryNames, "category", "categories")
+                            OneUiCapsuleChip(
+                                label = label,
+                                selected = true,
+                                onClick = { viewModel.setFilterCategories(emptySet()) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            )
+                        }
+
+                        if (filterState.selectedTagUids.isNotEmpty()) {
+                            val label = if (selectedTagNames.size == 1) "#${selectedTagNames.first()}" else "${selectedTagNames.size} tags"
+                            OneUiCapsuleChip(
+                                label = label,
+                                selected = true,
+                                onClick = { viewModel.setFilterTags(emptySet()) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
                             )
                         }
                     }
@@ -1239,6 +1267,44 @@ fun OneUiSearchAndFilterScreen(
                     }
                 }
             }
+        }
+
+        when (activeFilterSheet) {
+            FilterSheetType.ACCOUNTS -> {
+                AccountFilterSheet(
+                    accounts = allAccounts,
+                    initialSelectedUids = filterState.selectedAccountUids,
+                    onApply = { uids ->
+                        viewModel.setFilterAccounts(uids)
+                        activeFilterSheet = null
+                    },
+                    onDismissRequest = { activeFilterSheet = null }
+                )
+            }
+            FilterSheetType.CATEGORIES -> {
+                CategoryFilterSheet(
+                    expenseCategories = expenseCategories,
+                    incomeCategories = incomeCategories,
+                    initialSelectedCategoryUids = filterState.selectedCategoryUids,
+                    onApply = { uids ->
+                        viewModel.setFilterCategories(uids)
+                        activeFilterSheet = null
+                    },
+                    onDismissRequest = { activeFilterSheet = null }
+                )
+            }
+            FilterSheetType.TAGS -> {
+                TagFilterSheet(
+                    tags = allTags,
+                    initialSelectedTagUids = filterState.selectedTagUids,
+                    onApply = { uids ->
+                        viewModel.setFilterTags(uids)
+                        activeFilterSheet = null
+                    },
+                    onDismissRequest = { activeFilterSheet = null }
+                )
+            }
+            null -> {}
         }
     }
 }

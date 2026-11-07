@@ -1223,46 +1223,7 @@ private fun OneUiSelectionCircle(
     }
 }
 
-@Composable
-private fun OneUiCategoryIcon(
-    icon: String,
-    name: String,
-    modifier: Modifier = Modifier,
-    tint: Color = OneUiTheme.colors.textPrimary
-) {
-    val lowerName = name.lowercase(Locale.getDefault())
-    val vectorIcon = when {
-        lowerName.contains("kolkata") || lowerName.contains("city") || lowerName.contains("location") -> Icons.Default.LocationOn
-        lowerName.contains("food") || lowerName.contains("dining") || lowerName.contains("restaurant") -> Icons.Default.Restaurant
-        lowerName.contains("transport") || lowerName.contains("cab") || lowerName.contains("car") || lowerName.contains("fuel") -> Icons.Default.DirectionsCar
-        lowerName.contains("health") || lowerName.contains("fitness") || lowerName.contains("medical") -> Icons.Default.FavoriteBorder
-        lowerName.contains("lifestyle") || lowerName.contains("leisure") || lowerName.contains("entertainment") || lowerName.contains("game") -> Icons.Default.SportsEsports
-        lowerName.contains("shopping") || lowerName.contains("cloth") || lowerName.contains("electronic") -> Icons.Default.ShoppingBag
-        lowerName.contains("grocer") -> Icons.Default.ShoppingBasket
-        lowerName.contains("bill") || lowerName.contains("admin") -> Icons.AutoMirrored.Filled.ReceiptLong
-        lowerName.contains("salary") || lowerName.contains("bonus") -> Icons.Default.AccountBalance
-        lowerName.contains("invest") -> Icons.AutoMirrored.Filled.TrendingUp
-        else -> null
-    }
-
-    if (vectorIcon != null) {
-        Icon(
-            imageVector = vectorIcon,
-            contentDescription = name,
-            tint = tint,
-            modifier = modifier
-        )
-    } else if (icon.isNotBlank() && icon != "📁") {
-        Text(text = icon, fontSize = 20.sp)
-    } else {
-        Icon(
-            imageVector = Icons.Default.Category,
-            contentDescription = name,
-            tint = tint,
-            modifier = modifier
-        )
-    }
-}
+// OneUiCategoryIcon is now shared in com.moneymanager.app.ui.components.OneUiCategoryIcon
 
 @Composable
 private fun OneUiAccountTypeIcon(
