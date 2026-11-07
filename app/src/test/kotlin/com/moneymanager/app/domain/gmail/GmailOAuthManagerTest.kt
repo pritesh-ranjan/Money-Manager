@@ -75,6 +75,26 @@ class GmailOAuthManagerTest {
     }
 
     @Test
+    fun testDefaultOkHttpClientDisablesRedirects() {
+        val oauthClient = GmailOAuthManager.defaultOkHttpClient()
+        assertFalse("OAuth OkHttpClient must not follow redirects", oauthClient.followRedirects)
+        assertFalse("OAuth OkHttpClient must not follow SSL redirects", oauthClient.followSslRedirects)
+
+        val apiClient = com.moneymanager.app.domain.gmail.api.GmailApiClient.defaultOkHttpClient()
+        assertFalse("Gmail API OkHttpClient must not follow redirects", apiClient.followRedirects)
+        assertFalse("Gmail API OkHttpClient must not follow SSL redirects", apiClient.followSslRedirects)
+    }
+
+    @Test
+    fun testIsValidOAuthState() {
+        assertTrue(GmailOAuthManager.isValidOAuthState("secret_state_123", "secret_state_123"))
+        assertFalse(GmailOAuthManager.isValidOAuthState("secret_state_123", "different_state_456"))
+        assertFalse(GmailOAuthManager.isValidOAuthState("secret_state_123", null))
+        assertFalse(GmailOAuthManager.isValidOAuthState(null, "secret_state_123"))
+        assertFalse(GmailOAuthManager.isValidOAuthState(null, null))
+    }
+
+    @Test
     fun testBuildResponseHtmlSuccessAndError() {
         val successHtml = manager.buildResponseHtml(isSuccess = true)
         assertTrue(successHtml.contains("Connected to Money Manager"))

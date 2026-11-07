@@ -201,6 +201,11 @@ class GmailSyncEngine(
                     continue
                 }
 
+                // 1. Strict Authenticated Bank Sender verification (DMARC pass + .bank.in domain)
+                if (!BankFilterEngine.verifyAuthenticatedBankSender(messageDetail)) {
+                    continue
+                }
+
                 val sender = messageDetail.sender
                 val subject = messageDetail.subject
 
@@ -497,6 +502,9 @@ class GmailSyncEngine(
         val accessToken = oauthManager.getFreshAccessToken(context) ?: return null
         return try {
             val messageDetail = apiClient.getMessage(accessToken, messageId)
+            if (!BankFilterEngine.verifyAuthenticatedBankSender(messageDetail)) {
+                return null
+            }
             val pdfAtt = AttachmentValidator.filterPdfAttachments(messageDetail.attachments).firstOrNull() ?: return null
             val bytes = apiClient.getAttachment(accessToken, messageId, pdfAtt.attachmentId)
             cached.parentFile?.mkdirs()

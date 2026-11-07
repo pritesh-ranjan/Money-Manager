@@ -38,7 +38,17 @@ open class GmailOAuthManager(
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                .followRedirects(false)
+                .followSslRedirects(false)
                 .build()
+        }
+
+        fun isValidOAuthState(expectedState: String?, receivedState: String?): Boolean {
+            if (expectedState == null || receivedState == null) return false
+            return MessageDigest.isEqual(
+                expectedState.toByteArray(Charsets.UTF_8),
+                receivedState.toByteArray(Charsets.UTF_8)
+            )
         }
 
         @Volatile
@@ -202,6 +212,13 @@ open class GmailOAuthManager(
                             val st = requestUri.getQueryParameter("state")
 
                             if (!code.isNullOrBlank() || !err.isNullOrBlank()) {
+                                if (!isValidOAuthState(state, st)) {
+                                    val forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                    clientSocket.getOutputStream().write(forbidden.toByteArray(Charsets.UTF_8))
+                                    clientSocket.close()
+                                    continue
+                                }
+
                                 authCode = code
                                 authError = err
                                 receivedState = st
@@ -246,9 +263,7 @@ open class GmailOAuthManager(
             return@withContext OAuthResult.Error("No authorization code received from Google.")
         }
 
-        if (state == null || receivedState == null ||
-            !java.security.MessageDigest.isEqual(state.toByteArray(Charsets.UTF_8), receivedState.toByteArray(Charsets.UTF_8))
-        ) {
+        if (!isValidOAuthState(state, receivedState)) {
             return@withContext OAuthResult.Error("Invalid OAuth state parameter. Possible CSRF attempt.")
         }
 
@@ -402,9 +417,7 @@ open class GmailOAuthManager(
         val redirectUriToUse = pendingRedirectUri ?: GmailAuthConfig.REDIRECT_URI
 
         try {
-            if (expectedState == null || state == null ||
-                !java.security.MessageDigest.isEqual(expectedState.toByteArray(Charsets.UTF_8), state.toByteArray(Charsets.UTF_8))
-            ) {
+            if (!isValidOAuthState(expectedState, state)) {
                 return@withContext OAuthResult.Error("Invalid OAuth state parameter. Possible CSRF attempt.")
             }
 

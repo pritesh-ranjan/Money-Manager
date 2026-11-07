@@ -154,9 +154,10 @@ class GmailStatementParserIntegrationTest {
                     threadId = "thread_01",
                     internalDate = 1729000000000L,
                     headers = listOf(
-                        GmailHeader("From", "credit_cards@icicibank.com"),
+                        GmailHeader("From", "credit_cards@icici.bank.in"),
                         GmailHeader("Subject", "Your ICICI Bank Amazon Pay Credit Card Statement for Sep 2026"),
-                        GmailHeader("Date", "Tue, 15 Oct 2026 10:00:00 +0530")
+                        GmailHeader("Date", "Tue, 15 Oct 2026 10:00:00 +0530"),
+                        GmailHeader("Authentication-Results", "mx.google.com; dkim=pass; dmarc=pass header.from=icici.bank.in")
                     ),
                     attachments = listOf(
                         GmailAttachmentRef(
@@ -216,7 +217,8 @@ class GmailStatementParserIntegrationTest {
         assertEquals("ICICI Bank", record.bankName)
         assertEquals(GmailImportStatus.SUCCESS.name, record.importStatus)
         assertNotNull("Statement ID must be populated", record.statementId)
-        assertTrue("Statement ID should identify the card and month", record.statementId!!.contains("4315") || record.statementId!!.contains("3004"))
+        val stmtId = record.statementId ?: ""
+        assertTrue("Statement ID should identify the card and month", stmtId.contains("4315") || stmtId.contains("3004"))
 
         // 4. Verify data imported into StatementRepository & StatementDao
         val statementSummaries = fakeStatementDao.getAllStatementSummariesRaw()
@@ -275,8 +277,9 @@ class GmailStatementParserIntegrationTest {
                     threadId = "t2",
                     internalDate = 1729000000000L,
                     headers = listOf(
-                        GmailHeader("From", "alerts@axisbank.com"),
-                        GmailHeader("Subject", "Axis Bank Credit Card Statement")
+                        GmailHeader("From", "alerts@axis.bank.in"),
+                        GmailHeader("Subject", "Axis Bank Credit Card Statement"),
+                        GmailHeader("Authentication-Results", "mx.google.com; dkim=pass; dmarc=pass header.from=axis.bank.in")
                     ),
                     attachments = listOf(GmailAttachmentRef("att_enc", "axis_statement.pdf", "application/pdf", goldenPdfBytes.size.toLong()))
                 )

@@ -131,7 +131,7 @@ class GmailSyncEngineTest {
         fakeImportDao.insertOrUpdate(
             GmailImportHistoryEntity(
                 messageId = "already_seen_msg_1",
-                sender = "alerts@icicibank.com",
+                sender = "alerts@icici.bank.in",
                 subject = "Credit Card Statement",
                 receivedEpochMillis = 1000L,
                 bankName = "ICICI Bank",
@@ -265,8 +265,9 @@ class GmailSyncEngineTest {
                     threadId = "t1",
                     internalDate = 1000L,
                     headers = listOf(
-                        GmailHeader("From", "statements@icicibank.com"),
-                        GmailHeader("Subject", "Credit Card Statement")
+                        GmailHeader("From", "statements@icici.bank.in"),
+                        GmailHeader("Subject", "Credit Card Statement"),
+                        GmailHeader("Authentication-Results", "mx.google.com; dkim=pass; dmarc=pass header.from=icici.bank.in")
                     ),
                     attachments = listOf(
                         GmailAttachmentRef("att_1", "statement.pdf", "application/pdf", 1024L)
@@ -290,7 +291,70 @@ class GmailSyncEngineTest {
         val outcome = engine.syncIncremental(context, fakeImportDao, fakeSyncDao, statementRepo)
         assertTrue(outcome is SyncOutcome.Success)
         assertNotNull(searchedQuery)
-        assertTrue("Search query must filter by after date", searchedQuery!!.contains("after:"))
-        assertTrue("Search query must filter by pdf attachment", searchedQuery!!.contains("filename:pdf"))
+        val query = searchedQuery ?: ""
+        assertTrue("Search query must filter by after date", query.contains("after:"))
+        assertTrue("Search query must filter by pdf attachment", query.contains("filename:pdf"))
+        assertTrue("Search query must pre-filter by bank.in sender domain", query.contains("from:bank.in"))
+    }
+
+    @Test
+    fun testIncrementalSync_rejectsUnauthenticatedOrSpoofedSender() = runTest {
+        var attachmentDownloadAttempted = false
+        val fakeApiClient = object : GmailApiClient() {
+            override suspend fun listMessages(
+                accessToken: String,
+                query: String,
+                maxResults: Int,
+                pageToken: String?
+            ): GmailMessagesListResponse {
+                return GmailMessagesListResponse(messageIds = listOf("spoofed_msg_1"))
+            }
+
+            override suspend fun listHistory(
+                accessToken: String,
+                startHistoryId: String,
+                maxResults: Int,
+                pageToken: String?
+            ): GmailHistoryResponse {
+                return GmailHistoryResponse(history = emptyList(), historyId = "201")
+            }
+
+            override suspend fun getMessage(accessToken: String, messageId: String): GmailMessageDetail {
+                return GmailMessageDetail(
+                    id = messageId,
+                    threadId = "t_spoof",
+                    internalDate = 1000L,
+                    headers = listOf(
+                        GmailHeader("From", "alerts@icici.bank.in"),
+                        GmailHeader("Subject", "Your Credit Card Statement"),
+                        // Spoofed: DMARC failed on Google mx!
+                        GmailHeader("Authentication-Results", "mx.google.com; dkim=fail; dmarc=fail (p=REJECT) header.from=icici.bank.in")
+                    ),
+                    attachments = listOf(
+                        GmailAttachmentRef("att_malicious", "statement.pdf", "application/pdf", 1024L)
+                    )
+                )
+            }
+
+            override suspend fun getAttachment(accessToken: String, messageId: String, attachmentId: String): ByteArray {
+                attachmentDownloadAttempted = true
+                return "%PDF-1.4 malicious pdf".toByteArray()
+            }
+        }
+
+        fakeSyncDao.updateSyncProgress("100", System.currentTimeMillis(), GmailSyncStatus.SUCCESS.name)
+
+        val engine = GmailSyncEngine(
+            apiClient = fakeApiClient,
+            oauthManager = fakeOAuthManager,
+            parserRegistry = StatementParserRegistry()
+        )
+
+        val outcome = engine.syncIncremental(context, fakeImportDao, fakeSyncDao, statementRepo)
+        assertTrue(outcome is SyncOutcome.Success)
+        val success = outcome as SyncOutcome.Success
+        assertEquals("Zero statements must be imported when DMARC authentication fails", 0, success.newStatementsCount)
+        assertFalse("Attachment must never be downloaded for unauthenticated sender", attachmentDownloadAttempted)
+        assertTrue("Import history must be empty", fakeImportDao.getAllHistoryRaw().isEmpty())
     }
 }

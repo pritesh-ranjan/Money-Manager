@@ -13,7 +13,7 @@ data class GmailSyncRules(
     val ignoredSubjectKeywords: List<String> = DEFAULT_IGNORED_SUBJECTS
 ) {
     companion object {
-        const val DEFAULT_SEARCH_QUERY = "has:attachment filename:pdf"
+        const val DEFAULT_SEARCH_QUERY = "has:attachment filename:pdf from:bank.in"
         val DEFAULT_IGNORED_SUBJECTS = listOf(
             "Combined",
             "Savings Account",

@@ -55,6 +55,10 @@ data class GmailMessageDetail(
         return headers.firstOrNull { it.name.equals(name, ignoreCase = true) }?.value
     }
 
+    fun getHeaders(name: String): List<String> {
+        return headers.filter { it.name.equals(name, ignoreCase = true) }.map { it.value }
+    }
+
     val sender: String get() = getHeader("From").orEmpty()
     val subject: String get() = getHeader("Subject").orEmpty()
     val dateString: String get() = getHeader("Date").orEmpty()
