@@ -46,14 +46,35 @@ object SqliteBackupManager {
                 )
             }
 
-            context.contentResolver.openOutputStream(destinationUri)?.use { output ->
+            // Create a sanitized staging copy of the database to prevent sensitive credential leakage
+            val stagingFile = File(context.cacheDir, "export_staging_${System.currentTimeMillis()}.sqlite")
+            try {
                 FileInputStream(dbFile).use { input ->
-                    input.copyTo(output)
+                    FileOutputStream(stagingFile).use { output ->
+                        input.copyTo(output)
+                    }
                 }
-            } ?: return@withContext BackupRestoreResult(
-                success = false,
-                message = "Unable to open output stream for destination."
-            )
+
+                // Sanitize sensitive credentials from the exported backup database
+                try {
+                    SQLiteDatabase.openDatabase(stagingFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+                        db.execSQL("UPDATE OR IGNORE gmail_sync_state SET defaultPdfPasswordEncrypted = NULL")
+                    }
+                } catch (_: Exception) {}
+
+                context.contentResolver.openOutputStream(destinationUri)?.use { output ->
+                    FileInputStream(stagingFile).use { input ->
+                        input.copyTo(output)
+                    }
+                } ?: return@withContext BackupRestoreResult(
+                    success = false,
+                    message = "Unable to open output stream for destination."
+                )
+            } finally {
+                if (stagingFile.exists()) {
+                    stagingFile.delete()
+                }
+            }
 
             BackupRestoreResult(
                 success = true,
@@ -95,7 +116,14 @@ object SqliteBackupManager {
                 null
             } ?: if (sourceUri.scheme == "file" || sourceUri.scheme == null) {
                 val f = File(sourceUri.path ?: "")
-                if (f.exists()) FileInputStream(f) else null
+                if (f.exists()) {
+                    val canonicalPath = f.canonicalPath
+                    val internalDbDir = context.getDatabasePath("money_manager.db").parentFile?.canonicalPath
+                    val internalPrefsDir = File(context.applicationInfo.dataDir, "shared_prefs").canonicalPath
+                    val isProhibited = (internalDbDir != null && canonicalPath.startsWith(internalDbDir)) ||
+                            (internalPrefsDir != null && canonicalPath.startsWith(internalPrefsDir))
+                    if (isProhibited) null else FileInputStream(f)
+                } else null
             } else null
 
             stream?.use { input ->
@@ -161,10 +189,11 @@ object SqliteBackupManager {
                     val name = c.getStringOrDefault("name", "Currency")
                     val isoCode = c.getStringOrDefault("isoCode", "INR")
                     val symbol = c.getStringOrDefault("symbol", "₹")
-                    val rate = c.getDoubleOrDefault("rateToBase", 1.0)
+                    val rawRate = c.getDoubleOrDefault("rateToBase", 1.0)
+                    val rate = if (rawRate > 0.0 && rawRate.isFinite()) rawRate else 1.0
                     val isMain = c.getIntOrDefault("isMainCurrency", 0) == 1
                     val isCustom = c.getIntOrDefault("isCustom", 0) == 1
-                    val dec = c.getIntOrDefault("decimalPlaces", 2)
+                    val dec = c.getIntOrDefault("decimalPlaces", 2).coerceIn(0, 4)
                     currencies.add(CurrencyEntity(uid, name, isoCode, symbol, rate, isMain, isCustom, dec))
                 }
             }
@@ -180,10 +209,11 @@ object SqliteBackupManager {
                     val typeStr = c.getStringOrDefault("accountType", AccountType.SAVINGS.name)
                     val accountType = try { AccountType.valueOf(typeStr) } catch (_: Exception) { AccountType.SAVINGS }
                     val currencyUid = c.getStringOrDefault("currencyUid", currencies.firstOrNull()?.uid ?: "CURRENCY_INR")
-                    val openBal = c.getDoubleOrDefault("openingBalance", 0.0)
-                    val stmtDay = c.getIntOrNull("statementDay")
-                    val dueDay = c.getIntOrNull("paymentDueDay")
-                    val limit = c.getDoubleOrNull("creditLimit")
+                    val rawOpenBal = c.getDoubleOrDefault("openingBalance", 0.0)
+                    val openBal = if (rawOpenBal.isFinite()) rawOpenBal else 0.0
+                    val stmtDay = c.getIntOrNull("statementDay")?.takeIf { it in 1..31 }
+                    val dueDay = c.getIntOrNull("paymentDueDay")?.takeIf { it in 1..31 }
+                    val limit = c.getDoubleOrNull("creditLimit")?.takeIf { it.isFinite() && it >= 0.0 }
                     val settlementUid = c.getStringOrNull("settlementAccountUid")
                     val linkedUid = c.getStringOrNull("linkedParentAccountUid")
                     val incNw = c.getIntOrDefault("includeInNetWorth", 1) == 1
@@ -253,13 +283,16 @@ object SqliteBackupManager {
                     val uid = c.getStringOrDefault("uid", UUID.randomUUID().toString())
                     val typeStr = c.getStringOrDefault("type", TransactionType.EXPENSE.name)
                     val type = try { TransactionType.valueOf(typeStr) } catch (_: Exception) { TransactionType.EXPENSE }
-                    val accAmt = c.getDoubleOrDefault("accountAmount", 0.0)
-                    val baseAmt = c.getDoubleOrDefault("baseAmount", accAmt)
-                    val rate = c.getDoubleOrDefault("exchangeRate", 1.0)
+                    val rawAccAmt = c.getDoubleOrDefault("accountAmount", 0.0)
+                    val accAmt = if (rawAccAmt.isFinite()) rawAccAmt else 0.0
+                    val rawBaseAmt = c.getDoubleOrDefault("baseAmount", accAmt)
+                    val baseAmt = if (rawBaseAmt.isFinite()) rawBaseAmt else accAmt
+                    val rawRate = c.getDoubleOrDefault("exchangeRate", 1.0)
+                    val rate = if (rawRate > 0.0 && rawRate.isFinite()) rawRate else 1.0
                     val currUid = c.getStringOrDefault("currencyUid", "CURRENCY_INR")
                     val accUid = c.getStringOrDefault("accountUid", "")
                     val toAccUid = c.getStringOrNull("toAccountUid")
-                    val toAccAmt = c.getDoubleOrNull("toAccountAmount")
+                    val toAccAmt = c.getDoubleOrNull("toAccountAmount")?.takeIf { it.isFinite() }
                     val catUid = c.getStringOrNull("categoryUid")
                     val note = c.getStringOrDefault("note", "")
                     val desc = c.getStringOrDefault("description", "")
@@ -304,20 +337,15 @@ object SqliteBackupManager {
             }
         }
 
-        // Atomic clear and insert
-        dao.clearAllTransactionTags()
-        dao.clearAllTransactions()
-        dao.clearAllAccounts()
-        dao.clearAllCategories()
-        dao.clearAllTags()
-        dao.clearAllCurrencies()
-
-        if (currencies.isNotEmpty()) dao.insertCurrencies(currencies)
-        if (accounts.isNotEmpty()) dao.insertAccounts(accounts)
-        if (categories.isNotEmpty()) dao.insertCategories(categories)
-        if (tags.isNotEmpty()) dao.insertTags(tags)
-        if (transactions.isNotEmpty()) dao.insertTransactions(transactions)
-        if (crossRefs.isNotEmpty()) dao.insertTransactionTagCrossRefs(crossRefs)
+        // Single atomic Room transaction to prevent partial restore data loss
+        dao.replaceAllBackupData(
+            currencies = currencies,
+            categories = categories,
+            accounts = accounts,
+            transactions = transactions,
+            tags = tags,
+            tagCrossRefs = crossRefs
+        )
 
         return BackupRestoreResult(
             success = true,
@@ -617,20 +645,15 @@ object SqliteBackupManager {
             }
         }
 
-        // Commit to Room
-        dao.clearAllTransactionTags()
-        dao.clearAllTransactions()
-        dao.clearAllAccounts()
-        dao.clearAllCategories()
-        dao.clearAllTags()
-        dao.clearAllCurrencies()
-
-        if (currencies.isNotEmpty()) dao.insertCurrencies(currencies)
-        if (accounts.isNotEmpty()) dao.insertAccounts(accounts)
-        if (categories.isNotEmpty()) dao.insertCategories(categories)
-        if (tags.isNotEmpty()) dao.insertTags(tags)
-        if (transactions.isNotEmpty()) dao.insertTransactions(transactions)
-        if (crossRefs.isNotEmpty()) dao.insertTransactionTagCrossRefs(crossRefs)
+        // Single atomic Room transaction to prevent partial restore data loss
+        dao.replaceAllBackupData(
+            currencies = currencies,
+            categories = categories,
+            accounts = accounts,
+            transactions = transactions,
+            tags = tags,
+            tagCrossRefs = crossRefs
+        )
 
         return BackupRestoreResult(
             success = true,

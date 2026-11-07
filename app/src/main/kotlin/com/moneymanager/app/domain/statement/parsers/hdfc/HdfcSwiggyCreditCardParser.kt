@@ -67,15 +67,15 @@ class HdfcSwiggyCreditCardParser(
     private fun extractMetadata(firstPage: SpatialPage): StatementMetadata {
         val fullText = firstPage.fullText
 
-        // 1. Account Holder Name: PRITESH RANJAN Credit Card No. 526873XXXXXX3453
-        val nameMatcher = Pattern.compile("^([A-Z\\s]{3,30})\\s+Credit Card No\\.", Pattern.MULTILINE).matcher(fullText)
-        val name = if (nameMatcher.find()) nameMatcher.group(1)?.trim() ?: "PRITESH RANJAN" else "PRITESH RANJAN"
+        // 1. Account Holder Name: Matches name before "Credit Card No." or "[CKYC ID"
+        val nameMatcher = Pattern.compile("^([A-Z\\s]{3,30})\\s+(?:Credit Card No\\.|\\[CKYC ID)", Pattern.MULTILINE).matcher(fullText)
+        val name = if (nameMatcher.find()) nameMatcher.group(1)?.trim() ?: "Cardholder" else "Cardholder"
 
-        // 2. Card Number: 526873XXXXXX3453
+        // 2. Card Number: e.g. 526873XXXXXX1234
         val cardMasked = extractRegex(
             fullText,
             Pattern.compile("Credit\\s+Card\\s+No\\.[\\s:]*(\\b5268[X\\d]{8,14}\\b|\\b\\d{4}[X\\d]{8,14}\\b)")
-        ) ?: "526873XXXXXX3453"
+        ) ?: "XXXX-XXXX-XXXX"
 
         // 3. Statement Date: e.g. "Statement Date 14 Oct, 2026"
         val statementDate = extractDateWithPattern(
@@ -266,7 +266,7 @@ class HdfcSwiggyCreditCardParser(
             for (line in tableLines) {
                 val lineText = line.text.trim()
                 // Skip non-transaction lines like cardholder name header or insights
-                if (lineText.contains("PRITESH RANJAN [CKYC ID", ignoreCase = true)) continue
+                if (lineText.contains("[CKYC ID", ignoreCase = true)) continue
                 if (lineText.contains("Domestic Transactions", ignoreCase = true)) continue
 
                 // Check for Date: e.g. 14/09/2026| 19:32 or 14/09/2026

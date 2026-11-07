@@ -1,5 +1,6 @@
 package com.moneymanager.app.domain
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -235,5 +236,53 @@ class DataLeakageSecurityTest {
 
         val actionCount = Regex("\\.addAction\\(").findAll(code).count()
         org.junit.Assert.assertEquals("Notification must have exactly 3 action buttons", 3, actionCount)
+    }
+
+    @Test
+    fun testProductionCode_doesNotContainHardcodedPersonalDeveloperPII() {
+        val root = findProjectRoot()
+        val mainSrcDir = File(root, "app/src/main/kotlin")
+        assertTrue("Main source directory must exist", mainSrcDir.exists())
+
+        val sensitivePatterns = listOf(
+            "PRITESH RANJAN",
+            "526873XXXXXX3453",
+            "4315XXXXXXXX3004"
+        )
+
+        val violations = mutableListOf<String>()
+        mainSrcDir.walkTopDown().filter { it.extension == "kt" }.forEach { file ->
+            val content = file.readText()
+            for (pattern in sensitivePatterns) {
+                if (content.contains(pattern, ignoreCase = true)) {
+                    violations.add("${file.relativeTo(root).path} contains prohibited developer literal: $pattern")
+                }
+            }
+        }
+
+        assertTrue(
+            "Production source code must not contain hardcoded developer personal names or card numbers:\n${violations.joinToString("\n")}",
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun testStatementEntityMapper_defensivelyMasksRawCardNumbers() {
+        val rawPan16 = "4186881234568158"
+        val masked = com.moneymanager.app.domain.statement.core.StatementEntityMapper.sanitizeCardMask(rawPan16)
+        assertEquals("4186XXXXXXXX8158", masked)
+
+        val alreadyMasked = "418688******8158"
+        assertEquals(alreadyMasked, com.moneymanager.app.domain.statement.core.StatementEntityMapper.sanitizeCardMask(alreadyMasked))
+    }
+
+    @Test
+    fun testGmailOAuthManager_escapesErrorParamInHtmlResponse() {
+        val manager = com.moneymanager.app.domain.gmail.auth.GmailOAuthManager()
+        val maliciousPayload = "<script>alert('xss')</script>"
+        val html = manager.buildResponseHtml(isSuccess = false, error = maliciousPayload)
+
+        assertFalse("HTML response must not contain unescaped error script tag", html.contains("<script>alert("))
+        assertTrue("HTML response must contain escaped script entity", html.contains("&lt;script&gt;alert("))
     }
 }

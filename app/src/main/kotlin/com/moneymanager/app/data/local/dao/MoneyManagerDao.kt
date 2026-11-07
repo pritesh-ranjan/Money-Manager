@@ -267,4 +267,28 @@ interface MoneyManagerDao {
 
     @Query("DELETE FROM currencies")
     suspend fun clearAllCurrencies()
+
+    @Transaction
+    suspend fun replaceAllBackupData(
+        currencies: List<CurrencyEntity>,
+        categories: List<CategoryEntity>,
+        accounts: List<AccountEntity>,
+        transactions: List<TransactionEntity>,
+        tags: List<TagEntity> = emptyList(),
+        tagCrossRefs: List<TransactionTagCrossRef> = emptyList()
+    ) {
+        clearAllTransactionTags()
+        clearAllTransactions()
+        clearAllAccounts()
+        clearAllCategories()
+        clearAllTags()
+        clearAllCurrencies()
+
+        if (currencies.isNotEmpty()) insertCurrencies(currencies)
+        if (categories.isNotEmpty()) insertCategories(categories)
+        if (accounts.isNotEmpty()) insertAccounts(accounts)
+        if (tags.isNotEmpty()) insertTags(tags)
+        if (transactions.isNotEmpty()) insertTransactions(transactions)
+        if (tagCrossRefs.isNotEmpty()) insertTransactionTagCrossRefs(tagCrossRefs)
+    }
 }

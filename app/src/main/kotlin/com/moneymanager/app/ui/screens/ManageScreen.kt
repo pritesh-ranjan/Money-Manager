@@ -1,6 +1,8 @@
 package com.moneymanager.app.ui.screens
 
+import android.app.Activity
 import android.net.Uri
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -89,7 +91,10 @@ fun ManageScreen(
     val isAppLocked by AppLockManager.isLocked.collectAsState()
     var isLockConfigured by remember { mutableStateOf(AppLockManager.isLockConfigured()) }
     var isBiometricEnabled by remember { mutableStateOf(AppLockManager.isBiometricEnabled()) }
+    var isPrivacyShieldEnabled by remember { mutableStateOf(AppLockManager.isPrivacyShieldEnabled()) }
     var showPinSetupDialog by remember { mutableStateOf(false) }
+    var showVerifyDialog by remember { mutableStateOf(false) }
+    var pendingSecurityAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // SQLite Backup & Restore Launchers
     val exportLauncher = rememberLauncherForActivityResult(
@@ -134,7 +139,7 @@ fun ManageScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // 1. Top Profile / Account Card (Matches "Pritesh Ranjan / Samsung account" in Screenshot 5)
+                    // 1. Top Profile / Account Card (Matches User Profile / Account design in One UI)
                     item(key = "profile_banner_card") {
                         OneUiCard(
                             onClick = { currentSubScreen = SettingsSubScreen.SECURITY },
@@ -248,9 +253,17 @@ fun ManageScreen(
                                         onCheckedChange = { enable ->
                                             if (enable) {
                                                 showPinSetupDialog = true
-                                             } else {
-                                                AppLockManager.disableLock()
-                                                isLockConfigured = false
+                                            } else {
+                                                if (isLockConfigured) {
+                                                    pendingSecurityAction = {
+                                                        AppLockManager.disableLock()
+                                                        isLockConfigured = false
+                                                    }
+                                                    showVerifyDialog = true
+                                                } else {
+                                                    AppLockManager.disableLock()
+                                                    isLockConfigured = false
+                                                }
                                             }
                                         },
                                         showVerticalDivider = true
@@ -373,14 +386,29 @@ fun ManageScreen(
                                             if (enable) {
                                                 showPinSetupDialog = true
                                             } else {
-                                                AppLockManager.disableLock()
-                                                isLockConfigured = false
+                                                if (isLockConfigured) {
+                                                    pendingSecurityAction = {
+                                                        AppLockManager.disableLock()
+                                                        isLockConfigured = false
+                                                    }
+                                                    showVerifyDialog = true
+                                                } else {
+                                                    AppLockManager.disableLock()
+                                                    isLockConfigured = false
+                                                }
                                             }
                                         },
                                         showVerticalDivider = true
                                     )
                                 },
-                                onClick = { showPinSetupDialog = true }
+                                onClick = {
+                                    if (isLockConfigured) {
+                                        pendingSecurityAction = { showPinSetupDialog = true }
+                                        showVerifyDialog = true
+                                    } else {
+                                        showPinSetupDialog = true
+                                    }
+                                }
                             )
 
                             OneUiInsetDivider()
@@ -407,14 +435,33 @@ fun ManageScreen(
 
                             OneUiInsetDivider()
 
+                            val currentContext = androidx.compose.ui.platform.LocalContext.current
                             OneUiListRow(
                                 title = "Privacy Screen Shield",
                                 subtitle = "Hide preview in recent apps",
                                 subtitleColor = OneUiTheme.colors.textSecondary,
                                 trailingContent = {
                                     OneUiSwitch(
-                                        checked = true,
-                                        onCheckedChange = {},
+                                        checked = isPrivacyShieldEnabled,
+                                        onCheckedChange = { enable ->
+                                            val activity = currentContext as? Activity
+                                            if (!enable && isLockConfigured) {
+                                                pendingSecurityAction = {
+                                                    AppLockManager.setPrivacyShieldEnabled(false)
+                                                    isPrivacyShieldEnabled = false
+                                                    activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                                                }
+                                                showVerifyDialog = true
+                                            } else {
+                                                AppLockManager.setPrivacyShieldEnabled(enable)
+                                                isPrivacyShieldEnabled = enable
+                                                if (enable) {
+                                                    activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                                                } else {
+                                                    activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                                                }
+                                            }
+                                        },
                                         showVerticalDivider = true
                                     )
                                 }
@@ -429,7 +476,14 @@ fun ManageScreen(
                         ) {
                             OneUiListRow(
                                 title = if (isLockConfigured) "Change 4-digit PIN" else "Set up 4-digit PIN",
-                                onClick = { showPinSetupDialog = true }
+                                onClick = {
+                                    if (isLockConfigured) {
+                                        pendingSecurityAction = { showPinSetupDialog = true }
+                                        showVerifyDialog = true
+                                    } else {
+                                        showPinSetupDialog = true
+                                    }
+                                }
                             )
                         }
                     }
@@ -1151,6 +1205,31 @@ fun ManageScreen(
                     showPinSetupDialog = false
                 },
                 onDismiss = { showPinSetupDialog = false }
+            )
+        }
+    }
+
+    // Verify PIN Dialog before modifying sensitive security settings
+    if (showVerifyDialog) {
+        Dialog(
+            onDismissRequest = {
+                showVerifyDialog = false
+                pendingSecurityAction = null
+            },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            AppLockScreen(
+                mode = LockScreenMode.VERIFY,
+                onSuccess = {
+                    showVerifyDialog = false
+                    val action = pendingSecurityAction
+                    pendingSecurityAction = null
+                    action?.invoke()
+                },
+                onDismiss = {
+                    showVerifyDialog = false
+                    pendingSecurityAction = null
+                }
             )
         }
     }

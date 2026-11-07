@@ -83,17 +83,20 @@ open class GmailOAuthManager(
     ): String {
         val encodedScope = URLEncoder.encode(GmailAuthConfig.GMAIL_READONLY_SCOPE, "UTF-8")
         val encodedRedirectUri = URLEncoder.encode(redirectUri, "UTF-8")
+        val encodedClientId = URLEncoder.encode(clientId, "UTF-8")
+        val encodedState = URLEncoder.encode(state, "UTF-8")
+        val encodedCodeChallenge = URLEncoder.encode(codeChallenge, "UTF-8")
 
         return StringBuilder(GmailAuthConfig.AUTH_ENDPOINT)
-            .append("?client_id=").append(clientId)
+            .append("?client_id=").append(encodedClientId)
             .append("&redirect_uri=").append(encodedRedirectUri)
             .append("&response_type=code")
             .append("&scope=").append(encodedScope)
             .append("&access_type=offline")
             .append("&prompt=consent") // Explicit consent to guarantee refresh_token
-            .append("&code_challenge=").append(codeChallenge)
+            .append("&code_challenge=").append(encodedCodeChallenge)
             .append("&code_challenge_method=S256")
-            .append("&state=").append(state)
+            .append("&state=").append(encodedState)
             .toString()
     }
 
@@ -166,7 +169,9 @@ open class GmailOAuthManager(
         try {
             while (authCode == null && authError == null) {
                 val clientSocket = try {
-                    socket.accept()
+                    socket.accept().apply {
+                        soTimeout = 10_000 // 10 second timeout on accepted socket read
+                    }
                 } catch (e: SocketTimeoutException) {
                     return@withContext OAuthResult.Error("Sign-in timed out. Please try again.")
                 } catch (e: IOException) {
@@ -209,6 +214,8 @@ open class GmailOAuthManager(
                                 val header = "HTTP/1.1 200 OK\r\n" +
                                         "Content-Type: text/html; charset=utf-8\r\n" +
                                         "Content-Length: ${responseBytes.size}\r\n" +
+                                        "X-Content-Type-Options: nosniff\r\n" +
+                                        "Cache-Control: no-store\r\n" +
                                         "Connection: close\r\n\r\n"
                                 out.write(header.toByteArray(Charsets.UTF_8))
                                 out.write(responseBytes)
@@ -239,7 +246,9 @@ open class GmailOAuthManager(
             return@withContext OAuthResult.Error("No authorization code received from Google.")
         }
 
-        if (state != receivedState) {
+        if (state == null || receivedState == null ||
+            !java.security.MessageDigest.isEqual(state.toByteArray(Charsets.UTF_8), receivedState.toByteArray(Charsets.UTF_8))
+        ) {
             return@withContext OAuthResult.Error("Invalid OAuth state parameter. Possible CSRF attempt.")
         }
 
@@ -258,16 +267,25 @@ open class GmailOAuthManager(
         activeLoopbackServer = null
     }
 
+    private fun escapeHtml(text: String): String {
+        return text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#x27;")
+    }
+
     /**
      * Builds a responsive, polished HTML landing page displayed in Chrome when the OAuth flow completes.
      */
     open fun buildResponseHtml(isSuccess: Boolean, error: String? = null): String {
         val title = if (isSuccess) "Connected to Money Manager" else "Authentication Failed"
         val icon = if (isSuccess) "&#9989;" else "&#9888;&#65039;"
+        val safeError = error?.let { escapeHtml(it) }
         val message = if (isSuccess) {
             "Google authentication was successful! You can now return to the Money Manager app."
         } else {
-            "Authentication could not be completed: ${error ?: "Unknown error"}. Please return to Money Manager and try again."
+            "Authentication could not be completed: ${safeError ?: "Unknown error"}. Please return to Money Manager and try again."
         }
         val buttonText = if (isSuccess) "Return to Money Manager" else "Back to App"
         val statusParam = if (isSuccess) "done" else "error"
@@ -378,17 +396,28 @@ open class GmailOAuthManager(
             return@withContext OAuthResult.Error("No authorization code returned from Google.")
         }
 
-        // Verify CSRF state
+        // Verify CSRF state and exchange code with cleanup
         val expectedState = pendingState
-        if (expectedState != null && state != expectedState) {
-            return@withContext OAuthResult.Error("Invalid OAuth state parameter. Possible CSRF attempt.")
-        }
-
         val verifier = pendingCodeVerifier
-            ?: return@withContext OAuthResult.Error("Missing PKCE code verifier. Please retry authentication.")
-
         val redirectUriToUse = pendingRedirectUri ?: GmailAuthConfig.REDIRECT_URI
-        exchangeAuthorizationCode(context, code, verifier, redirectUriToUse)
+
+        try {
+            if (expectedState == null || state == null ||
+                !java.security.MessageDigest.isEqual(expectedState.toByteArray(Charsets.UTF_8), state.toByteArray(Charsets.UTF_8))
+            ) {
+                return@withContext OAuthResult.Error("Invalid OAuth state parameter. Possible CSRF attempt.")
+            }
+
+            if (verifier == null) {
+                return@withContext OAuthResult.Error("Missing PKCE code verifier. Please retry authentication.")
+            }
+
+            exchangeAuthorizationCode(context, code, verifier, redirectUriToUse)
+        } finally {
+            pendingCodeVerifier = null
+            pendingState = null
+            pendingRedirectUri = null
+        }
     }
 
     /**

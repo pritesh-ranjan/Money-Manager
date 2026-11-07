@@ -10,11 +10,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
@@ -51,8 +53,8 @@ class MainActivity : ComponentActivity() {
         com.moneymanager.app.work.InsightWorkScheduler.schedulePeriodic(this)
         com.moneymanager.app.work.InsightWorkScheduler.runNow(this)
         GmailWorkScheduler.schedulePeriodic(this)
-        // Prevent screen capture and task switcher thumbnail leaks when app lock is active
-        if (AppLockManager.isLockConfigured()) {
+        // Prevent screen capture and task switcher thumbnail leaks when privacy shield or app lock is active
+        if (AppLockManager.isLockConfigured() || AppLockManager.isPrivacyShieldEnabled()) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         }
         enableEdgeToEdge()
@@ -70,38 +72,56 @@ class MainActivity : ComponentActivity() {
                     val isLocked by AppLockManager.isLocked.collectAsState()
                     val quickAddType by pendingQuickAddType.collectAsState()
 
-                    // MainScreen always stays composed so in-flight state, sheets and activity result launchers survive locking
-                    MainScreen(
-                        viewModel = mainViewModel,
-                        quickAddType = if (isLocked) null else quickAddType,
-                        onQuickAddConsumed = {
-                            pendingQuickAddType.value = null
-                        }
-                    )
-
-                    if (isLocked) {
-                        Dialog(
-                            onDismissRequest = {
-                                // Pressing back on lock screen exits app to home, never bypasses lock
-                                moveTaskToBack(true)
-                            },
-                            properties = DialogProperties(
-                                dismissOnClickOutside = false,
-                                usePlatformDefaultWidth = false,
-                                decorFitsSystemWindows = false,
-                                securePolicy = SecureFlagPolicy.SecureOn
-                            )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // MainScreen stays composed so in-flight state survives locking, but is fully obscured when locked
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(if (isLocked) 0f else 1f)
                         ) {
-                            AppLockScreen(
-                                onSuccess = {
-                                    AppLockManager.unlock()
+                            MainScreen(
+                                viewModel = mainViewModel,
+                                quickAddType = if (isLocked) null else quickAddType,
+                                onQuickAddConsumed = {
+                                    pendingQuickAddType.value = null
                                 }
                             )
+                        }
+
+                        if (isLocked) {
+                            Dialog(
+                                onDismissRequest = {
+                                    // Pressing back on lock screen exits app to home, never bypasses lock
+                                    moveTaskToBack(true)
+                                },
+                                properties = DialogProperties(
+                                    dismissOnClickOutside = false,
+                                    usePlatformDefaultWidth = false,
+                                    decorFitsSystemWindows = false,
+                                    securePolicy = SecureFlagPolicy.SecureOn
+                                )
+                            ) {
+                                AppLockScreen(
+                                    onSuccess = {
+                                        AppLockManager.unlock()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (AppLockManager.isLockConfigured() || AppLockManager.isPrivacyShieldEnabled()) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        QuickAddNotificationManager.showPersistentNotification(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -114,11 +134,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppLockManager.onAppForegrounded()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        QuickAddNotificationManager.showPersistentNotification(this)
     }
 
     override fun onStop() {

@@ -56,6 +56,11 @@ class GmailSyncEngine(
             GmailTokenStorage.setConnectedEmail(context, profile.emailAddress)
 
             val currentState = syncDao.getSyncStateRaw()
+            val legacyPwd = currentState?.defaultPdfPasswordEncrypted
+            if (!legacyPwd.isNullOrBlank()) {
+                GmailTokenStorage.addPdfPassword(context, legacyPwd)
+            }
+
             val newState = GmailSyncStateEntity(
                 id = 1,
                 accountEmail = profile.emailAddress,
@@ -64,7 +69,7 @@ class GmailSyncEngine(
                 lastSyncStatus = GmailSyncStatus.SUCCESS.name,
                 lastSyncError = null,
                 isAutoSyncEnabled = currentState?.isAutoSyncEnabled ?: true,
-                defaultPdfPasswordEncrypted = currentState?.defaultPdfPasswordEncrypted
+                defaultPdfPasswordEncrypted = null
             )
             syncDao.updateSyncState(newState)
             profile.emailAddress
@@ -89,6 +94,11 @@ class GmailSyncEngine(
             ?: return@withContext SyncOutcome.Error("Not connected to Google Account. Please authenticate.")
 
         var syncState = syncDao.getSyncStateRaw()
+        val legacyPassword = syncState?.defaultPdfPasswordEncrypted
+        if (!legacyPassword.isNullOrBlank()) {
+            GmailTokenStorage.addPdfPassword(context, legacyPassword)
+            syncDao.setDefaultPdfPassword(null)
+        }
         var baselineHistoryId = syncState?.lastHistoryId
 
         // If no baseline historyId exists, initialize baseline now without importing historical emails
@@ -504,7 +514,20 @@ class GmailSyncEngine(
     }
 
     fun getPendingPdfFile(context: Context, messageId: String): File {
-        return File(getPendingPdfDir(context), "${messageId}.pdf")
+        val safeMessageId = messageId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(128)
+        val dir = getPendingPdfDir(context)
+        val file = File(dir, "${safeMessageId}.pdf")
+        if (file.canonicalFile.parentFile != dir.canonicalFile) {
+            throw SecurityException("Invalid messageId path traversal attempt")
+        }
+        return file
+    }
+
+    fun clearAllPendingPdfs(context: Context) {
+        try {
+            val dir = getPendingPdfDir(context)
+            dir.listFiles()?.forEach { it.delete() }
+        } catch (_: Exception) {}
     }
 
     private fun cachePendingPdf(context: Context, messageId: String, tempFile: File) {

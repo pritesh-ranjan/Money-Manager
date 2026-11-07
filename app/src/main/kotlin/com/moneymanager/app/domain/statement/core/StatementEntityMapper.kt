@@ -9,6 +9,22 @@ object StatementEntityMapper {
     private val yearMonthFormatter = DateTimeFormatter.ofPattern("yyyy-MM", Locale.ENGLISH)
 
     /**
+     * Ensures credit card numbers are defensively masked to prevent raw 13-19 digit PAN leakage.
+     */
+    fun sanitizeCardMask(rawMask: String): String {
+        val clean = rawMask.replace(" ", "").trim()
+        val allDigits = clean.all { it.isDigit() }
+        return if (allDigits && clean.length in 13..19) {
+            val first = clean.take(4)
+            val last = clean.takeLast(4)
+            val maskedMiddle = "X".repeat(clean.length - 8)
+            "$first$maskedMiddle$last"
+        } else {
+            clean
+        }
+    }
+
+    /**
      * Converts a domain [StatementParseResult] into a list of [CardStatementTransactionEntity]
      * ready for persistence in the unified statement table.
      */
@@ -20,8 +36,9 @@ object StatementEntityMapper {
         val summary = result.summary
         val recon = result.reconciliation
 
+        val maskedCard = sanitizeCardMask(meta.accountOrCardNumberMasked)
         val statementYearMonth = meta.statementDate.format(yearMonthFormatter)
-        val statementId = buildStatementId(meta.accountOrCardNumberMasked, statementYearMonth)
+        val statementId = buildStatementId(maskedCard, statementYearMonth)
 
         val statementDateEpoch = meta.statementDate.toEpochDay()
         val paymentDueDateEpoch = meta.paymentDueDate?.toEpochDay()
@@ -36,7 +53,7 @@ object StatementEntityMapper {
                 statementId = statementId,
                 bankId = meta.bankId,
                 bankName = meta.bankName,
-                accountOrCardNumberMasked = meta.accountOrCardNumberMasked,
+                accountOrCardNumberMasked = maskedCard,
                 accountHolderName = meta.accountHolderName,
                 statementYearMonth = statementYearMonth,
                 statementDateEpochDay = statementDateEpoch,
@@ -78,7 +95,7 @@ object StatementEntityMapper {
      * e.g. "418688******8158_2026-10"
      */
     fun buildStatementId(cardMasked: String, yearMonth: String): String {
-        val sanitizedCard = cardMasked.replace(" ", "")
+        val sanitizedCard = sanitizeCardMask(cardMasked)
         val sanitizedYm = yearMonth.trim()
         return "${sanitizedCard}_$sanitizedYm"
     }

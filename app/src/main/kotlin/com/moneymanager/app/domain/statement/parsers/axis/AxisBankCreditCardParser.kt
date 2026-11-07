@@ -85,7 +85,7 @@ class AxisBankCreditCardParser(
             for (line in page.lines) {
                 val cardMatcher = cardHeaderRegex.matcher(line.text)
                 if (cardMatcher.find()) {
-                    maskedCardNumber = cardMatcher.group(1).trim()
+                    maskedCardNumber = StatementEntityMapper.sanitizeCardMask(cardMatcher.group(1).trim())
                     cardholderName = cardMatcher.group(2).trim()
                     break
                 }
@@ -106,7 +106,7 @@ class AxisBankCreditCardParser(
             for (line in firstPage.lines) {
                 val matcher = cardMaskedRegex.matcher(line.text)
                 if (matcher.find()) {
-                    maskedCardNumber = matcher.group(1).trim()
+                    maskedCardNumber = StatementEntityMapper.sanitizeCardMask(matcher.group(1).trim())
                     break
                 }
             }

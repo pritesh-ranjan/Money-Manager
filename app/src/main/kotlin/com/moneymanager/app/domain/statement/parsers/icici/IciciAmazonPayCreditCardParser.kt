@@ -67,11 +67,11 @@ class IciciAmazonPayCreditCardParser(
         // 1. Account holder name: located in left column (x < 250)
         val name = extractAccountHolderName(firstPage)
 
-        // 2. Masked Card Number: e.g. 4315XXXXXXXX3004
+        // 2. Masked Card Number: e.g. 4315XXXXXXXX1234
         val cardMasked = extractRegex(
             fullText,
             Pattern.compile("(\\b4315[X\\d]{8,12}\\b|\\b\\d{4}X{6,10}\\d{4}\\b)")
-        ) ?: "4315XXXXXXXX3004"
+        ) ?: "XXXX-XXXX-XXXX"
 
         // 3. Statement Date: e.g. "October 12, 2026"
         val statementDate = extractDateNearLabel(firstPage, "STATEMENT DATE") ?: LocalDate.now()
@@ -157,8 +157,8 @@ class IciciAmazonPayCreditCardParser(
                 val line = lines[i]
                 val t = line.text
 
-                // Total Amount Due line: e.g. line with `20,789.41 on the left side
-                if (t.contains("20,789.41") || (line.bounds.x < 200 && parseRowCurrencyNumbers(t).size == 1 && totalDue == 0.0)) {
+                // Total Amount Due line: e.g. line with currency amount on the left side
+                if (line.bounds.x < 200 && parseRowCurrencyNumbers(t).size == 1 && totalDue == 0.0) {
                     val nums = parseRowCurrencyNumbers(t)
                     if (nums.size == 1 && totalDue == 0.0) {
                         totalDue = nums[0]

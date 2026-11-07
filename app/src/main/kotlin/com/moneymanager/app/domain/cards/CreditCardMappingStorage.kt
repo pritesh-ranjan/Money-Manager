@@ -16,7 +16,7 @@ object CreditCardMappingStorage {
 
     /**
      * Builds a normalized canonical card key.
-     * e.g. bankId="HDFC_SWIGGY_CC", cardMasked="526873XXXXXX3453" -> "hdfc_3453"
+     * e.g. bankId="HDFC_SWIGGY_CC", cardMasked="526873XXXXXX1234" -> "hdfc_1234"
      */
     fun buildCardKey(bankId: String, cardMasked: String): String {
         val cleanMasked = cardMasked.replace("[^0-9]".toRegex(), "")

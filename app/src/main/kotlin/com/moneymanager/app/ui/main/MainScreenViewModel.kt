@@ -946,6 +946,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             gmailOAuthManager.disconnectAndRevoke(getApplication())
             gmailSyncDao.clearSyncState()
+            gmailSyncEngine.clearAllPendingPdfs(getApplication())
             GmailWorkScheduler.cancelPeriodic(getApplication())
             _uiMessage.value = UiMessage.Success("Disconnected and revoked Gmail access")
         }
@@ -966,7 +967,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveDefaultPdfPassword(password: String?) {
         viewModelScope.launch(Dispatchers.IO) {
             GmailTokenStorage.saveDefaultPdfPassword(getApplication(), password)
-            gmailSyncDao.setDefaultPdfPassword(password)
+            gmailSyncDao.setDefaultPdfPassword(null)
             loadPdfPasswords()
             _uiMessage.value = UiMessage.Success("Statement password saved")
         }
@@ -992,7 +993,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val content = getApplication<Application>().contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val maxBytes = 64 * 1024
+                    val buffer = ByteArray(maxBytes + 1)
+                    val read = stream.read(buffer)
+                    if (read > maxBytes) {
+                        throw IllegalArgumentException("OAuth credentials file too large (must be under 64 KB).")
+                    }
+                    if (read <= 0) "" else String(buffer, 0, read, Charsets.UTF_8)
                 } ?: throw IllegalArgumentException("Could not read credentials file from storage.")
 
                 val parsed = GoogleOAuthCredentialsParser.parse(content)
@@ -1008,6 +1015,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearGmailImportHistory() {
         viewModelScope.launch(Dispatchers.IO) {
             gmailImportDao.clearHistory()
+            gmailSyncEngine.clearAllPendingPdfs(getApplication())
             _uiMessage.value = UiMessage.Success("Statement import history cleared")
         }
     }

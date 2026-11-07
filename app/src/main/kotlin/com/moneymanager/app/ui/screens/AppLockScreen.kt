@@ -46,6 +46,7 @@ private fun Context.findActivity(): Activity? {
 
 enum class LockScreenMode {
     UNLOCK,
+    VERIFY,
     SET_PIN,
     CONFIRM_PIN
 }
@@ -63,7 +64,16 @@ fun AppLockScreen(
     var enteredPin by remember { mutableStateOf("") }
     var firstEnteredPin by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isChecking by remember { mutableStateOf(false) }
+    var lockoutSeconds by remember { mutableStateOf(AppLockManager.remainingLockoutSeconds()) }
     val shakeOffset = remember { Animatable(0f) }
+
+    LaunchedEffect(lockoutSeconds) {
+        if (lockoutSeconds > 0) {
+            delay(1000)
+            lockoutSeconds = AppLockManager.remainingLockoutSeconds()
+        }
+    }
 
     fun triggerShake() {
         coroutineScope.launch {
@@ -93,6 +103,7 @@ fun AppLockScreen(
     }
 
     fun handleDigit(digit: String) {
+        if (lockoutSeconds > 0 || isChecking) return
         if (enteredPin.length < 4) {
             val newPin = enteredPin + digit
             enteredPin = newPin
@@ -100,15 +111,22 @@ fun AppLockScreen(
 
             if (newPin.length == 4) {
                 when (currentMode) {
-                    LockScreenMode.UNLOCK -> {
+                    LockScreenMode.UNLOCK, LockScreenMode.VERIFY -> {
+                        isChecking = true
                         if (AppLockManager.verifyPin(newPin)) {
                             onSuccess()
                         } else {
-                            errorMessage = "Incorrect PIN"
+                            if (AppLockManager.isLockedOut()) {
+                                lockoutSeconds = AppLockManager.remainingLockoutSeconds()
+                                errorMessage = "Too many failed attempts. Try again in ${lockoutSeconds}s"
+                            } else {
+                                errorMessage = "Incorrect PIN"
+                            }
                             triggerShake()
                             coroutineScope.launch {
                                 delay(300)
                                 enteredPin = ""
+                                isChecking = false
                             }
                         }
                     }
@@ -141,6 +159,7 @@ fun AppLockScreen(
     }
 
     fun handleBackspace() {
+        if (lockoutSeconds > 0 || isChecking) return
         if (enteredPin.isNotEmpty()) {
             enteredPin = enteredPin.dropLast(1)
             errorMessage = null
@@ -174,6 +193,7 @@ fun AppLockScreen(
 
             val titleText = when (currentMode) {
                 LockScreenMode.UNLOCK -> "Enter PIN"
+                LockScreenMode.VERIFY -> "Verify PIN"
                 LockScreenMode.SET_PIN -> "Create PIN"
                 LockScreenMode.CONFIRM_PIN -> "Confirm PIN"
             }
@@ -188,15 +208,20 @@ fun AppLockScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
+            val subtitleText = when {
+                lockoutSeconds > 0 -> "Too many attempts. Try again in ${lockoutSeconds}s"
+                errorMessage != null -> errorMessage!!
+                currentMode == LockScreenMode.UNLOCK -> "Authenticate to access your finances"
+                currentMode == LockScreenMode.VERIFY -> "Confirm your 4-digit PIN to continue"
+                currentMode == LockScreenMode.SET_PIN -> "This 4-digit PIN will protect your vault"
+                currentMode == LockScreenMode.CONFIRM_PIN -> "Re-enter the 4-digit PIN to confirm"
+                else -> ""
+            }
             Text(
-                text = errorMessage ?: when (currentMode) {
-                    LockScreenMode.UNLOCK -> "Authenticate to access your finances"
-                    LockScreenMode.SET_PIN -> "This 4-digit PIN will protect your vault"
-                    LockScreenMode.CONFIRM_PIN -> "Re-enter the 4-digit PIN to confirm"
-                },
+                text = subtitleText,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    color = if (errorMessage != null) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary,
-                    fontWeight = if (errorMessage != null) FontWeight.SemiBold else FontWeight.Normal
+                    color = if (errorMessage != null || lockoutSeconds > 0) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary,
+                    fontWeight = if (errorMessage != null || lockoutSeconds > 0) FontWeight.SemiBold else FontWeight.Normal
                 ),
                 textAlign = TextAlign.Center
             )

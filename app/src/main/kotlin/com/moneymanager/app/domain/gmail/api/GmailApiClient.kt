@@ -69,7 +69,7 @@ open class GmailApiClient(
             .append("&maxResults=").append(maxResults)
 
         if (!pageToken.isNullOrBlank()) {
-            urlBuilder.append("&pageToken=").append(pageToken)
+            urlBuilder.append("&pageToken=").append(URLEncoder.encode(pageToken, "UTF-8"))
         }
 
         val request = Request.Builder()
@@ -114,13 +114,14 @@ open class GmailApiClient(
         maxResults: Int = 100,
         pageToken: String? = null
     ): GmailHistoryResponse = withContext(Dispatchers.IO) {
+        val encodedHistoryId = URLEncoder.encode(startHistoryId, "UTF-8")
         val urlBuilder = StringBuilder("$BASE_URL/history")
-            .append("?startHistoryId=").append(startHistoryId)
+            .append("?startHistoryId=").append(encodedHistoryId)
             .append("&historyTypes=messageAdded")
             .append("&maxResults=").append(maxResults)
 
         if (!pageToken.isNullOrBlank()) {
-            urlBuilder.append("&pageToken=").append(pageToken)
+            urlBuilder.append("&pageToken=").append(URLEncoder.encode(pageToken, "UTF-8"))
         }
 
         val request = Request.Builder()
@@ -179,7 +180,8 @@ open class GmailApiClient(
         accessToken: String,
         messageId: String
     ): GmailMessageDetail = withContext(Dispatchers.IO) {
-        val url = "$BASE_URL/messages/$messageId?format=full"
+        val encMessageId = URLEncoder.encode(messageId, "UTF-8")
+        val url = "$BASE_URL/messages/$encMessageId?format=full"
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $accessToken")
@@ -255,7 +257,9 @@ open class GmailApiClient(
         messageId: String,
         attachmentId: String
     ): ByteArray = withContext(Dispatchers.IO) {
-        val url = "$BASE_URL/messages/$messageId/attachments/$attachmentId"
+        val encMessageId = URLEncoder.encode(messageId, "UTF-8")
+        val encAttachmentId = URLEncoder.encode(attachmentId, "UTF-8")
+        val url = "$BASE_URL/messages/$encMessageId/attachments/$encAttachmentId"
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $accessToken")

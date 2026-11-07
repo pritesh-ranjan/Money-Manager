@@ -23,6 +23,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.moneymanager.app.domain.AppLockManager
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
 import com.moneymanager.app.ui.theme.OneUiTheme
@@ -38,6 +41,18 @@ fun PdfPasswordsScreen(
     var passwordInput by remember { mutableStateOf("") }
     var passwordToDelete by remember { mutableStateOf<String?>(null) }
     val revealedPasswords = remember { mutableStateListOf<String>() }
+    var isAppLockVerified by remember { mutableStateOf(!AppLockManager.isLockConfigured()) }
+    var pendingVerifyAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showVerifyDialog by remember { mutableStateOf(false) }
+
+    fun runWithAuth(action: () -> Unit) {
+        if (isAppLockVerified || !AppLockManager.isLockConfigured()) {
+            action()
+        } else {
+            pendingVerifyAction = action
+            showVerifyDialog = true
+        }
+    }
 
     OneUiCollapsibleScaffold(
         title = "Statement Passwords",
@@ -212,7 +227,9 @@ fun PdfPasswordsScreen(
                                         if (isRevealed) {
                                             revealedPasswords.remove(pwd)
                                         } else {
-                                            revealedPasswords.add(pwd)
+                                            runWithAuth {
+                                                revealedPasswords.add(pwd)
+                                            }
                                         }
                                     }
                                 ) {
@@ -225,7 +242,11 @@ fun PdfPasswordsScreen(
                                 }
 
                                 IconButton(
-                                    onClick = { passwordToDelete = pwd }
+                                    onClick = {
+                                        runWithAuth {
+                                            passwordToDelete = pwd
+                                        }
+                                    }
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Delete,
@@ -313,6 +334,31 @@ fun PdfPasswordsScreen(
                     color = OneUiTheme.colors.textPrimary,
                     fontSize = 14.sp
                 )
+            )
+        }
+    }
+
+    if (showVerifyDialog) {
+        Dialog(
+            onDismissRequest = {
+                showVerifyDialog = false
+                pendingVerifyAction = null
+            },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            AppLockScreen(
+                mode = LockScreenMode.VERIFY,
+                onSuccess = {
+                    showVerifyDialog = false
+                    isAppLockVerified = true
+                    val action = pendingVerifyAction
+                    pendingVerifyAction = null
+                    action?.invoke()
+                },
+                onDismiss = {
+                    showVerifyDialog = false
+                    pendingVerifyAction = null
+                }
             )
         }
     }

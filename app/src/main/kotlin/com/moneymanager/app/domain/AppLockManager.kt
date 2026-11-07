@@ -21,6 +21,7 @@ object AppLockManager {
     private const val KEY_PIN_HASH = "key_pin_hash"
     private const val KEY_PIN_SALT = "key_pin_salt"
     private const val KEY_BIOMETRIC_ENABLED = "key_biometric_enabled"
+    private const val KEY_PRIVACY_SHIELD_ENABLED = "key_privacy_shield_enabled"
     private const val KEY_FAILED_ATTEMPTS = "key_failed_attempts"
     private const val KEY_LOCKOUT_UNTIL = "key_lockout_until"
 
@@ -29,6 +30,13 @@ object AppLockManager {
     const val EXTERNAL_ACTIVITY_GRACE_MS = 120_000L
     private const val HASH_ITERATIONS = 10_000
     private const val HASH_KEY_LENGTH = 256
+
+    private const val KEY_ALIAS = "MoneyManagerAppLockKey"
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+    private const val GCM_IV_LENGTH = 12
+    private const val GCM_TAG_LENGTH = 128
+
+    private var testSecretKey: javax.crypto.SecretKey? = null
 
     private lateinit var prefs: SharedPreferences
 
@@ -41,6 +49,72 @@ object AppLockManager {
 
     // Injectable clock for deterministic security testing
     var timeProvider: () -> Long = { System.currentTimeMillis() }
+
+    private fun getOrCreateSecretKey(): javax.crypto.SecretKey {
+        testSecretKey?.let { return it }
+        return try {
+            val keyStore = java.security.KeyStore.getInstance(ANDROID_KEYSTORE)
+            keyStore.load(null)
+            if (!keyStore.containsAlias(KEY_ALIAS)) {
+                val keyGen = javax.crypto.KeyGenerator.getInstance("AES", ANDROID_KEYSTORE)
+                val keyGenParameterSpec = android.security.keystore.KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build()
+                keyGen.init(keyGenParameterSpec)
+                keyGen.generateKey()
+            } else {
+                keyStore.getKey(KEY_ALIAS, null) as javax.crypto.SecretKey
+            }
+        } catch (_: Exception) {
+            val fallback = testSecretKey ?: run {
+                val keyBytes = ByteArray(32) { (it * 13).toByte() }
+                javax.crypto.spec.SecretKeySpec(keyBytes, "AES").also { testSecretKey = it }
+            }
+            fallback
+        }
+    }
+
+    private fun encrypt(plainText: String?): String? {
+        if (plainText == null) return null
+        return try {
+            val secretKey = getOrCreateSecretKey()
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey)
+            val iv = cipher.iv
+            val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+            val combined = ByteArray(iv.size + cipherText.size)
+            System.arraycopy(iv, 0, combined, 0, iv.size)
+            System.arraycopy(cipherText, 0, combined, iv.size, cipherText.size)
+            java.util.Base64.getEncoder().encodeToString(combined)
+        } catch (_: Exception) {
+            plainText
+        }
+    }
+
+    private fun decrypt(encryptedBase64: String?): String? {
+        if (encryptedBase64 == null) return null
+        return try {
+            val combined = java.util.Base64.getDecoder().decode(encryptedBase64)
+            if (combined.size < GCM_IV_LENGTH) return encryptedBase64
+            val iv = ByteArray(GCM_IV_LENGTH)
+            val cipherText = ByteArray(combined.size - GCM_IV_LENGTH)
+            System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH)
+            System.arraycopy(combined, GCM_IV_LENGTH, cipherText, 0, cipherText.size)
+
+            val secretKey = getOrCreateSecretKey()
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val spec = javax.crypto.spec.GCMParameterSpec(GCM_TAG_LENGTH, iv)
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, spec)
+            String(cipher.doFinal(cipherText), Charsets.UTF_8)
+        } catch (_: Exception) {
+            encryptedBase64
+        }
+    }
 
     fun init(context: Context) {
         if (::prefs.isInitialized) return
@@ -66,6 +140,17 @@ object AppLockManager {
         return prefs.getBoolean(KEY_BIOMETRIC_ENABLED, true)
     }
 
+    fun isPrivacyShieldEnabled(): Boolean {
+        if (!::prefs.isInitialized) return true
+        return prefs.getBoolean(KEY_PRIVACY_SHIELD_ENABLED, true)
+    }
+
+    fun setPrivacyShieldEnabled(enabled: Boolean) {
+        if (::prefs.isInitialized) {
+            prefs.edit().putBoolean(KEY_PRIVACY_SHIELD_ENABLED, enabled).apply()
+        }
+    }
+
     fun isValidPinFormat(pin: String): Boolean {
         return pin.length == 4 && pin.all { it.isDigit() }
     }
@@ -83,8 +168,8 @@ object AppLockManager {
 
         prefs.edit()
             .putBoolean(KEY_LOCK_ENABLED, true)
-            .putString(KEY_PIN_HASH, hash)
-            .putString(KEY_PIN_SALT, saltHex)
+            .putString(KEY_PIN_HASH, encrypt(hash))
+            .putString(KEY_PIN_SALT, encrypt(saltHex))
             .putBoolean(KEY_BIOMETRIC_ENABLED, enableBiometrics)
             .putInt(KEY_FAILED_ATTEMPTS, 0)
             .putLong(KEY_LOCKOUT_UNTIL, 0L)
@@ -137,8 +222,11 @@ object AppLockManager {
             return false
         }
 
-        val storedHash = prefs.getString(KEY_PIN_HASH, null)
-        val storedSaltHex = prefs.getString(KEY_PIN_SALT, null)
+        val rawHash = prefs.getString(KEY_PIN_HASH, null)
+        val rawSaltHex = prefs.getString(KEY_PIN_SALT, null)
+
+        val storedHash = decrypt(rawHash)
+        val storedSaltHex = decrypt(rawSaltHex)
 
         // Fail-closed if configured lock data is missing or corrupted
         if (storedHash.isNullOrEmpty() || storedSaltHex.isNullOrEmpty()) {
@@ -170,12 +258,15 @@ object AppLockManager {
     private fun recordFailedAttempt(now: Long) {
         val currentFailed = prefs.getInt(KEY_FAILED_ATTEMPTS, 0) + 1
         val editor = prefs.edit()
-        if (currentFailed >= MAX_FAILED_ATTEMPTS) {
-            editor.putInt(KEY_FAILED_ATTEMPTS, 0)
-            editor.putLong(KEY_LOCKOUT_UNTIL, now + LOCKOUT_DURATION_MS)
-        } else {
-            editor.putInt(KEY_FAILED_ATTEMPTS, currentFailed)
+        val duration = when {
+            currentFailed >= 15 -> 300_000L
+            currentFailed >= 10 -> 60_000L
+            else -> LOCKOUT_DURATION_MS
         }
+        if (currentFailed >= MAX_FAILED_ATTEMPTS) {
+            editor.putLong(KEY_LOCKOUT_UNTIL, now + duration)
+        }
+        editor.putInt(KEY_FAILED_ATTEMPTS, currentFailed)
         editor.apply()
     }
 

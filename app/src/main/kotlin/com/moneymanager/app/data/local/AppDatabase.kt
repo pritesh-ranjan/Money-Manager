@@ -68,7 +68,6 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3, Migrations.MIGRATION_3_4)
                     .addCallback(DatabaseCallback(scope))
-                    .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
