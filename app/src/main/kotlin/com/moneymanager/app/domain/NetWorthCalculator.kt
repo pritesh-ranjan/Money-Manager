@@ -94,7 +94,12 @@ object NetWorthCalculator {
 
             if (acc.includeInNetWorth && !acc.isArchived) {
                 if (isLiability) {
-                    totalLiabilities += maxOf(0.0, baseBalance)
+                    if (baseBalance >= 0.0) {
+                        totalLiabilities += baseBalance
+                    } else {
+                        // Overpaid liability (credit surplus) is an asset owed back to the user
+                        totalAssets += -baseBalance
+                    }
                 } else {
                     totalAssets += baseBalance
                 }

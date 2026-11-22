@@ -115,7 +115,8 @@ object DomainValidator {
         require(trimmedName.isNotEmpty()) { "Account name cannot be empty" }
         require(account.uid.isNotBlank()) { "Account UID cannot be blank" }
         require(currencyExists) { "Selected currency does not exist" }
-        require(account.openingBalance.isFinite()) { "Opening balance must be finite" }
+        val balanceLabel = if (account.accountType == AccountType.CREDIT_CARD) "Outstanding amount" else "Opening balance"
+        require(account.openingBalance.isFinite()) { "$balanceLabel must be finite" }
 
         val duplicateName = existingAccounts.any {
             it.uid != account.uid && !it.isArchived && it.name.trim().equals(trimmedName, ignoreCase = true)
@@ -148,11 +149,11 @@ object DomainValidator {
         }
     }
 
-    fun parseMandatoryOpeningBalance(rawInput: String): Double {
+    fun parseMandatoryOpeningBalance(rawInput: String, fieldLabel: String = "Opening balance"): Double {
         val trimmed = rawInput.trim()
-        require(trimmed.isNotEmpty()) { "Opening balance is required" }
+        require(trimmed.isNotEmpty()) { "$fieldLabel is required" }
         val value = trimmed.toDoubleOrNull()
-        require(value != null && value.isFinite()) { "Please enter a valid opening balance" }
+        require(value != null && value.isFinite()) { "Please enter a valid ${fieldLabel.lowercase()}" }
         return value
     }
 

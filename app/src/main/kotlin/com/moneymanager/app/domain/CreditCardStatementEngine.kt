@@ -91,8 +91,37 @@ object CreditCardStatementEngine {
         var unbilledSpends = 0.0
         var unbilledCredits = 0.0
 
+        // Track full ledger balance using the same sign rules as NetWorthCalculator
+        var rawLedgerBalance = -card.openingBalance
+
         for (tx in transactions) {
             if (tx.isDeleted) continue
+
+            when (tx.type) {
+                TransactionType.INCOME -> {
+                    if (tx.accountUid == card.uid) {
+                        rawLedgerBalance += tx.accountAmount
+                    }
+                }
+                TransactionType.EXPENSE -> {
+                    if (tx.accountUid == card.uid) {
+                        rawLedgerBalance -= tx.accountAmount
+                    }
+                }
+                TransactionType.TRANSFER -> {
+                    if (tx.accountUid == card.uid) {
+                        rawLedgerBalance -= tx.accountAmount
+                    }
+                    if (tx.toAccountUid == card.uid) {
+                        rawLedgerBalance += (tx.toAccountAmount ?: tx.accountAmount)
+                    }
+                }
+                TransactionType.ADJUSTMENT -> {
+                    if (tx.accountUid == card.uid) {
+                        rawLedgerBalance += tx.accountAmount
+                    }
+                }
+            }
 
             val txTime = tx.timestamp
 
@@ -108,7 +137,7 @@ object CreditCardStatementEngine {
                 } else if (isCardRefund) {
                     billedCredits += tx.accountAmount
                 } else if (isCardAdjustment) {
-                    billedSpends += tx.accountAmount // difference adjustment
+                    billedSpends -= tx.accountAmount // positive ledger adjustment reduces liability debt
                 }
             } else if (txTime > lastCutoffMillis) {
                 if (isPaymentToCard) {
@@ -118,15 +147,15 @@ object CreditCardStatementEngine {
                 } else if (isCardRefund) {
                     unbilledCredits += tx.accountAmount
                 } else if (isCardAdjustment) {
-                    unbilledSpends += tx.accountAmount
+                    unbilledSpends -= tx.accountAmount // positive ledger adjustment reduces liability debt
                 }
             }
         }
 
         val statementBilled = maxOf(0.0, billedSpends - billedCredits)
-        val remainingStatementDue = maxOf(0.0, statementBilled - paymentsSinceStatement)
+        val totalOutstanding = maxOf(0.0, -rawLedgerBalance)
+        val remainingStatementDue = minOf(maxOf(0.0, statementBilled - paymentsSinceStatement), totalOutstanding)
         val unbilled = maxOf(0.0, unbilledSpends - unbilledCredits)
-        val totalOutstanding = remainingStatementDue + unbilled + maxOf(0.0, card.openingBalance)
 
         val creditLimit = card.creditLimit
         val availableCredit = creditLimit?.let { maxOf(0.0, it - totalOutstanding) }

@@ -14,6 +14,7 @@ import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.resolvedTypeName
 import com.moneymanager.app.notifications.QuickAddNotificationManager
+import com.moneymanager.app.ui.screens.formatAccountBalanceText
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -707,5 +708,40 @@ class AccountAndCardCrudValidationTest {
         )
         assertNull(QuickAddNotificationManager.resolveTransactionType(null as String?))
         assertNull(QuickAddNotificationManager.resolveTransactionType("android.intent.action.MAIN"))
+    }
+
+    @Test
+    fun testParseMandatoryOpeningBalance_usesCustomFieldLabel() {
+        try {
+            DomainValidator.parseMandatoryOpeningBalance("", fieldLabel = "Outstanding amount")
+            fail("Expected IllegalArgumentException for empty outstanding amount")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Outstanding amount is required", e.message)
+        }
+
+        try {
+            DomainValidator.parseMandatoryOpeningBalance("abc", fieldLabel = "Outstanding amount")
+            fail("Expected IllegalArgumentException for invalid outstanding amount")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Please enter a valid outstanding amount", e.message)
+        }
+
+        try {
+            DomainValidator.parseMandatoryOpeningBalance("")
+            fail("Expected IllegalArgumentException for empty opening balance")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Opening balance is required", e.message)
+        }
+    }
+
+    @Test
+    fun testFormatAccountBalanceText_formatsLiabilityCreditSurplusAndAssets() {
+        assertEquals("₹ 5,000.00", formatAccountBalanceText(5000.0, "₹", isLiability = true))
+        assertEquals("₹ 0.00", formatAccountBalanceText(0.0, "₹", isLiability = true))
+        assertEquals("+₹ 500.00 Cr", formatAccountBalanceText(-500.0, "₹", isLiability = true))
+
+        assertEquals("₹ 5,000.00", formatAccountBalanceText(5000.0, "₹", isLiability = false))
+        assertEquals("-₹ 500.00", formatAccountBalanceText(-500.0, "₹", isLiability = false))
+        assertEquals("₹ 0.00", formatAccountBalanceText(0.0, "₹", isLiability = false))
     }
 }

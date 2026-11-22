@@ -114,4 +114,58 @@ class NetWorthCalculatorTest {
         val dropDiff = NetWorthCalculator.computeAdjustmentDifference(mutualFunds, 500000.0, 490000.0)
         assertEquals(-10000.0, dropDiff, 0.001)
     }
+
+    @Test
+    fun testOverpaidCreditCardCountsSurplusAsAssetAndPreservesNetWorth() {
+        val savings = AccountEntity(
+            uid = "savings_1",
+            name = "Savings",
+            accountType = AccountType.SAVINGS,
+            currencyUid = inr.uid,
+            openingBalance = 10000.0
+        )
+        val creditCard = AccountEntity(
+            uid = "cc_overpaid",
+            name = "Overpaid Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            openingBalance = 0.0
+        )
+
+        val transactions = listOf(
+            TransactionEntity(
+                uid = "tx_spend",
+                type = TransactionType.EXPENSE,
+                accountAmount = 1000.0,
+                baseAmount = 1000.0,
+                currencyUid = inr.uid,
+                accountUid = creditCard.uid
+            ),
+            TransactionEntity(
+                uid = "tx_pay",
+                type = TransactionType.TRANSFER,
+                accountAmount = 1500.0,
+                baseAmount = 1500.0,
+                currencyUid = inr.uid,
+                accountUid = savings.uid,
+                toAccountUid = creditCard.uid,
+                toAccountAmount = 1500.0
+            )
+        )
+
+        val summary = NetWorthCalculator.calculate(
+            accounts = listOf(
+                AccountWithCurrency(savings, inr),
+                AccountWithCurrency(creditCard, inr)
+            ),
+            transactions = transactions,
+            mainCurrency = inr
+        )
+
+        val cardItem = summary.accountBalances.first { it.account.uid == creditCard.uid }
+        assertEquals(-500.0, cardItem.nativeBalance, 0.001)
+        assertEquals(9000.0, summary.totalAssetsBase, 0.001)
+        assertEquals(0.0, summary.totalLiabilitiesBase, 0.001)
+        assertEquals(9000.0, summary.netWorthBase, 0.001)
+    }
 }

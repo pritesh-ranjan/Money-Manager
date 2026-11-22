@@ -200,4 +200,210 @@ class CreditCardStatementEngineTest {
         assertEquals(0.0, summary.remainingStatementDue, 0.001)
         assertEquals(StatementStatus.PAID, summary.status)
     }
+
+    @Test
+    fun testOpeningBalancePaidDownByTransfers() {
+        val card = AccountEntity(
+            uid = "card_opening",
+            name = "Opening Debt Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = "INR",
+            openingBalance = 5000.0,
+            statementDay = 15,
+            paymentDueDay = 5,
+            creditLimit = 50000.0
+        )
+
+        val currentDate = LocalDate.of(2026, 10, 20)
+        val paymentTime = LocalDate.of(2026, 10, 18).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+
+        // Partial payment of 3000 reduces totalOutstanding from 5000 to 2000
+        val partialSummary = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "pay_partial",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 3000.0,
+                    baseAmount = 3000.0,
+                    currencyUid = "INR",
+                    accountUid = "bank",
+                    toAccountUid = card.uid,
+                    toAccountAmount = 3000.0,
+                    timestamp = paymentTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+        assertEquals(2000.0, partialSummary.totalOutstanding, 0.001)
+
+        // Full payment of 5000 clears totalOutstanding completely
+        val fullSummary = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "pay_full",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 5000.0,
+                    baseAmount = 5000.0,
+                    currencyUid = "INR",
+                    accountUid = "bank",
+                    toAccountUid = card.uid,
+                    toAccountAmount = 5000.0,
+                    timestamp = paymentTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+        assertEquals(0.0, fullSummary.totalOutstanding, 0.001)
+        assertEquals(50000.0, fullSummary.availableCredit!!, 0.001)
+        assertEquals(0, fullSummary.creditUtilizationPercent!!)
+    }
+
+    @Test
+    fun testExcessPaymentReducesOpeningBalanceAndMatchesLedger() {
+        val card = AccountEntity(
+            uid = "card_excess",
+            name = "Excess Pay Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = "INR",
+            openingBalance = 5000.0,
+            statementDay = 15,
+            paymentDueDay = 5,
+            creditLimit = 50000.0
+        )
+
+        val currentDate = LocalDate.of(2026, 10, 20)
+        val billedTime = LocalDate.of(2026, 10, 10).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+        val paymentTime = LocalDate.of(2026, 10, 17).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+        val unbilledTime = LocalDate.of(2026, 10, 18).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+
+        val summary = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "tx_billed",
+                    type = TransactionType.EXPENSE,
+                    accountAmount = 2000.0,
+                    baseAmount = 2000.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    timestamp = billedTime
+                ),
+                TransactionEntity(
+                    uid = "tx_pay",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 6000.0,
+                    baseAmount = 6000.0,
+                    currencyUid = "INR",
+                    accountUid = "bank",
+                    toAccountUid = card.uid,
+                    toAccountAmount = 6000.0,
+                    timestamp = paymentTime
+                ),
+                TransactionEntity(
+                    uid = "tx_unbilled",
+                    type = TransactionType.EXPENSE,
+                    accountAmount = 1000.0,
+                    baseAmount = 1000.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    timestamp = unbilledTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+
+        assertEquals(0.0, summary.remainingStatementDue, 0.001)
+        assertEquals(2000.0, summary.totalOutstanding, 0.001)
+    }
+
+    @Test
+    fun testOverpaymentClampsTotalOutstandingAndRemainingDueToZero() {
+        val card = AccountEntity(
+            uid = "card_overpay",
+            name = "Overpaid Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = "INR",
+            statementDay = 15,
+            paymentDueDay = 5,
+            creditLimit = 50000.0
+        )
+
+        val currentDate = LocalDate.of(2026, 10, 20)
+        val billedTime = LocalDate.of(2026, 10, 10).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+        val paymentTime = LocalDate.of(2026, 10, 18).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+
+        val summary = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "tx_spend",
+                    type = TransactionType.EXPENSE,
+                    accountAmount = 2000.0,
+                    baseAmount = 2000.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    timestamp = billedTime
+                ),
+                TransactionEntity(
+                    uid = "tx_overpay",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 2500.0,
+                    baseAmount = 2500.0,
+                    currencyUid = "INR",
+                    accountUid = "bank",
+                    toAccountUid = card.uid,
+                    toAccountAmount = 2500.0,
+                    timestamp = paymentTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+
+        assertEquals(0.0, summary.totalOutstanding, 0.001)
+        assertEquals(0.0, summary.remainingStatementDue, 0.001)
+        assertEquals(0, summary.creditUtilizationPercent!!)
+    }
+
+    @Test
+    fun testAdjustmentSignMatchesNetWorthCalculator() {
+        val card = AccountEntity(
+            uid = "card_adj",
+            name = "Adjusted Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = "INR",
+            openingBalance = 5000.0,
+            statementDay = 15,
+            paymentDueDay = 5,
+            creditLimit = 50000.0
+        )
+
+        val currentDate = LocalDate.of(2026, 10, 20)
+        val adjTime = LocalDate.of(2026, 10, 18).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+
+        // Positive ledger adjustment reduces liability debt from 5000 to 3000
+        val summary = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "tx_adj",
+                    type = TransactionType.ADJUSTMENT,
+                    accountAmount = 2000.0,
+                    baseAmount = 2000.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    timestamp = adjTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+
+        assertEquals(3000.0, summary.totalOutstanding, 0.001)
+    }
 }

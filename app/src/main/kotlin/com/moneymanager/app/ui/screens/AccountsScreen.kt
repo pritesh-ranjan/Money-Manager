@@ -388,8 +388,9 @@ fun OneUiAccountDetailScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
+                            val isLiability = account.resolvedIsLiability(accountTypesMap)
                             Text(
-                                text = "Current balance",
+                                text = if (isLiability && nativeBalance < -0.005) "Credit surplus" else "Current balance",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = OneUiTheme.colors.textSecondary,
                                     fontSize = 13.sp
@@ -397,16 +398,10 @@ fun OneUiAccountDetailScreen(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
 
-                            val isLiability = account.resolvedIsLiability(accountTypesMap)
-                            val balanceColor = if (isLiability) {
-                                if (nativeBalance > 0) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary
-                            } else {
-                                if (nativeBalance >= 0) OneUiTheme.colors.textPrimary else OneUiTheme.colors.expense
-                            }
-                            val sign = if (nativeBalance < 0 && !isLiability) "-" else ""
+                            val balanceColor = accountBalanceColor(nativeBalance, isLiability)
 
                             Text(
-                                text = "$sign${currency.symbol} " + CurrencyFormatter.formatIndianNumber(abs(nativeBalance)),
+                                text = formatAccountBalanceText(nativeBalance, currency.symbol, isLiability),
                                 style = MaterialTheme.typography.headlineLarge.copy(
                                     fontWeight = FontWeight.SemiBold,
                                     color = balanceColor,
@@ -545,7 +540,9 @@ fun OneUiAccountDetailScreen(
                                 )
                             }
 
-                            // Opening Balance Field
+                            // Opening Balance / Outstanding Amount Field
+                            val isQuickCreditCard = selectedBaseType == AccountType.CREDIT_CARD
+                            val isQuickLiability = selectedTypeEntity?.isLiability ?: selectedBaseType.isLiability
                             TextField(
                                 value = quickOpeningBalance,
                                 onValueChange = {
@@ -553,9 +550,43 @@ fun OneUiAccountDetailScreen(
                                     validationError = null
                                     showSaveSuccess = false
                                 },
-                                label = { Text("Opening Balance (${currency.symbol})") },
+                                label = {
+                                    Text(
+                                        if (isQuickCreditCard) {
+                                            "Outstanding Amount (${currency.symbol})"
+                                        } else {
+                                            "Opening Balance (${currency.symbol})"
+                                        }
+                                    )
+                                },
                                 placeholder = {
-                                    Text("Enter opening balance (e.g. 0.00)", color = OneUiTheme.colors.textMuted)
+                                    Text(
+                                        if (isQuickCreditCard) {
+                                            "Enter outstanding amount (e.g. 0.00)"
+                                        } else {
+                                            "Enter opening balance (e.g. 0.00)"
+                                        },
+                                        color = OneUiTheme.colors.textMuted
+                                    )
+                                },
+                                supportingText = when {
+                                    isQuickCreditCard -> {
+                                        {
+                                            Text(
+                                                "Enter positive amount currently owed (0 if paid off)",
+                                                color = OneUiTheme.colors.textMuted
+                                            )
+                                        }
+                                    }
+                                    isQuickLiability -> {
+                                        {
+                                            Text(
+                                                "Enter positive amount owed (0 if none)",
+                                                color = OneUiTheme.colors.textMuted
+                                            )
+                                        }
+                                    }
+                                    else -> null
                                 },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 singleLine = true,
@@ -594,59 +625,69 @@ fun OneUiAccountDetailScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             // Save Changes Button
-                            OneUiPillButton(
-                                text = if (showSaveSuccess) "Changes Saved!" else "Save Changes",
-                                onClick = {
-                                    val cleanName = quickName.trim()
-                                    if (cleanName.isEmpty()) {
-                                        validationError = "Account name cannot be empty"
-                                        return@OneUiPillButton
-                                    }
-
-                                    val stmtDay = quickStatementDay.toIntOrNull()
-                                    val dueDay = quickDueDay.toIntOrNull()
-                                    val limit = quickLimit.toDoubleOrNull()
-                                    val openingBal = try {
-                                        DomainValidator.parseMandatoryOpeningBalance(quickOpeningBalance)
-                                    } catch (e: IllegalArgumentException) {
-                                        validationError = e.message
-                                        return@OneUiPillButton
-                                    }
-
-                                    if (selectedBaseType == AccountType.CREDIT_CARD) {
-                                        if (stmtDay != null && stmtDay !in 1..31) {
-                                            validationError = "Statement day must be between 1 and 31"
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OneUiPillButton(
+                                    text = if (showSaveSuccess) "Changes Saved!" else "Save Changes",
+                                    onClick = {
+                                        val cleanName = quickName.trim()
+                                        if (cleanName.isEmpty()) {
+                                            validationError = "Account name cannot be empty"
                                             return@OneUiPillButton
                                         }
-                                        if (dueDay != null && dueDay !in 1..31) {
-                                            validationError = "Payment due day must be between 1 and 31"
+
+                                        val stmtDay = quickStatementDay.toIntOrNull()
+                                        val dueDay = quickDueDay.toIntOrNull()
+                                        val limit = quickLimit.toDoubleOrNull()
+                                        val openingBal = try {
+                                            DomainValidator.parseMandatoryOpeningBalance(
+                                                quickOpeningBalance,
+                                                fieldLabel = if (selectedBaseType == AccountType.CREDIT_CARD) "Outstanding amount" else "Opening balance"
+                                            )
+                                        } catch (e: IllegalArgumentException) {
+                                            validationError = e.message
                                             return@OneUiPillButton
                                         }
-                                        if (limit != null && limit < 0.0) {
-                                            validationError = "Credit limit cannot be negative"
-                                            return@OneUiPillButton
+
+                                        if (selectedBaseType == AccountType.CREDIT_CARD) {
+                                            if (stmtDay != null && stmtDay !in 1..31) {
+                                                validationError = "Statement day must be between 1 and 31"
+                                                return@OneUiPillButton
+                                            }
+                                            if (dueDay != null && dueDay !in 1..31) {
+                                                validationError = "Payment due day must be between 1 and 31"
+                                                return@OneUiPillButton
+                                            }
+                                            if (limit != null && limit < 0.0) {
+                                                validationError = "Credit limit cannot be negative"
+                                                return@OneUiPillButton
+                                            }
                                         }
-                                    }
 
-                                    val updated = account.copy(
-                                        name = cleanName,
-                                        accountType = selectedBaseType,
-                                        accountTypeUid = selectedTypeEntity?.uid ?: quickTypeUid,
-                                        openingBalance = openingBal,
-                                        statementDay = if (selectedBaseType == AccountType.CREDIT_CARD) stmtDay else null,
-                                        paymentDueDay = if (selectedBaseType == AccountType.CREDIT_CARD) dueDay else null,
-                                        creditLimit = if (selectedBaseType == AccountType.CREDIT_CARD) limit else null,
-                                        includeInNetWorth = quickIncludeInNetWorth
-                                    )
+                                        val updated = account.copy(
+                                            name = cleanName,
+                                            accountType = selectedBaseType,
+                                            accountTypeUid = selectedTypeEntity?.uid ?: quickTypeUid,
+                                            openingBalance = openingBal,
+                                            statementDay = if (selectedBaseType == AccountType.CREDIT_CARD) stmtDay else null,
+                                            paymentDueDay = if (selectedBaseType == AccountType.CREDIT_CARD) dueDay else null,
+                                            creditLimit = if (selectedBaseType == AccountType.CREDIT_CARD) limit else null,
+                                            includeInNetWorth = quickIncludeInNetWorth
+                                        )
 
-                                    viewModel.saveAccount(updated)
-                                    validationError = null
-                                    showSaveSuccess = true
-                                },
-                                containerColor = if (showSaveSuccess) OneUiTheme.colors.income else OneUiTheme.colors.primaryAccent,
-                                contentColor = Color.White,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                                        viewModel.saveAccount(updated)
+                                        validationError = null
+                                        showSaveSuccess = true
+                                    },
+                                    containerColor = if (showSaveSuccess) OneUiTheme.colors.income else OneUiTheme.colors.primaryAccent,
+                                    contentColor = Color.White,
+                                    leadingIcon = if (showSaveSuccess) Icons.Default.Check else null,
+                                    modifier = Modifier.defaultMinSize(minWidth = 128.dp, minHeight = 38.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -774,6 +815,42 @@ fun OneUiAccountDetailScreen(
     }
 }
 
+internal fun formatAccountBalanceText(
+    balance: Double,
+    symbol: String,
+    isLiability: Boolean
+): String {
+    val epsilon = 0.005
+    val formatted = CurrencyFormatter.formatIndianNumber(abs(balance))
+    return if (isLiability) {
+        when {
+            balance < -epsilon -> "+$symbol $formatted Cr"
+            balance > epsilon -> "$symbol $formatted"
+            else -> "$symbol ${CurrencyFormatter.formatIndianNumber(0.0)}"
+        }
+    } else {
+        when {
+            balance < -epsilon -> "-$symbol $formatted"
+            balance > epsilon -> "$symbol $formatted"
+            else -> "$symbol ${CurrencyFormatter.formatIndianNumber(0.0)}"
+        }
+    }
+}
+
+@Composable
+private fun accountBalanceColor(balance: Double, isLiability: Boolean): Color {
+    val epsilon = 0.005
+    return if (isLiability) {
+        when {
+            balance > epsilon -> OneUiTheme.colors.expense
+            balance < -epsilon -> OneUiTheme.colors.income
+            else -> OneUiTheme.colors.textSecondary
+        }
+    } else {
+        if (balance < -epsilon) OneUiTheme.colors.expense else OneUiTheme.colors.textPrimary
+    }
+}
+
 /**
  * Account row matching Screenshot 1 (Circular Colored Badge) & Screenshot 2 (Blue active subtext + '|' separator).
  */
@@ -833,16 +910,10 @@ fun OneUiAccountBalanceRow(
 
         // Balance Column
         Column(horizontalAlignment = Alignment.End) {
-            val balanceColor = if (isLiability) {
-                if (item.nativeBalance > 0) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary
-            } else {
-                if (item.nativeBalance >= 0) OneUiTheme.colors.textPrimary else OneUiTheme.colors.expense
-            }
-
-            val sign = if (item.nativeBalance < 0 && !isLiability) "-" else ""
+            val balanceColor = accountBalanceColor(item.nativeBalance, isLiability)
 
             Text(
-                text = "$sign${curr.symbol} " + CurrencyFormatter.formatIndianNumber(abs(item.nativeBalance)),
+                text = formatAccountBalanceText(item.nativeBalance, curr.symbol, isLiability),
                 style = MaterialTheme.typography.bodyLarge.copy(
                     fontWeight = FontWeight.Normal,
                     color = balanceColor,
@@ -851,8 +922,14 @@ fun OneUiAccountBalanceRow(
             )
 
             if (!curr.isMainCurrency) {
+                val baseFormatted = CurrencyFormatter.formatIndianNumber(abs(item.baseBalance))
+                val baseText = when {
+                    isLiability && item.baseBalance < -0.005 -> "≈ +₹$baseFormatted Cr"
+                    !isLiability && item.baseBalance < -0.005 -> "≈ -₹$baseFormatted"
+                    else -> "≈ ₹$baseFormatted"
+                }
                 Text(
-                    text = "≈ ₹" + CurrencyFormatter.formatIndianNumber(abs(item.baseBalance)),
+                    text = baseText,
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = OneUiTheme.colors.textMuted,
                         fontSize = 11.sp
@@ -1119,7 +1196,10 @@ fun OneUiAddEditAccountDialog(
             }
 
             val openingBal = try {
-                DomainValidator.parseMandatoryOpeningBalance(openingBalanceStr)
+                DomainValidator.parseMandatoryOpeningBalance(
+                    openingBalanceStr,
+                    fieldLabel = if (selectedBaseType == AccountType.CREDIT_CARD) "Outstanding amount" else "Opening balance"
+                )
             } catch (e: IllegalArgumentException) {
                 validationError = e.message
                 return@OneUiBottomDialog
@@ -1273,15 +1353,43 @@ fun OneUiAddEditAccountDialog(
                 )
             }
 
+            val isDialogCreditCard = selectedBaseType == AccountType.CREDIT_CARD
+            val isDialogLiability = selectedTypeEntity?.isLiability ?: selectedBaseType.isLiability
             TextField(
                 value = openingBalanceStr,
                 onValueChange = {
                     openingBalanceStr = it
                     validationError = null
                 },
-                label = { Text("Opening Balance") },
+                label = { Text(if (isDialogCreditCard) "Outstanding Amount" else "Opening Balance") },
                 placeholder = {
-                    Text("Enter opening balance (e.g. 0.00)", color = OneUiTheme.colors.textMuted)
+                    Text(
+                        if (isDialogCreditCard) {
+                            "Enter outstanding amount (e.g. 0.00)"
+                        } else {
+                            "Enter opening balance (e.g. 0.00)"
+                        },
+                        color = OneUiTheme.colors.textMuted
+                    )
+                },
+                supportingText = when {
+                    isDialogCreditCard -> {
+                        {
+                            Text(
+                                "Enter positive amount currently owed (0 if paid off)",
+                                color = OneUiTheme.colors.textMuted
+                            )
+                        }
+                    }
+                    isDialogLiability -> {
+                        {
+                            Text(
+                                "Enter positive amount owed (0 if none)",
+                                color = OneUiTheme.colors.textMuted
+                            )
+                        }
+                    }
+                    else -> null
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
