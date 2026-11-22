@@ -12,6 +12,8 @@ import com.moneymanager.app.data.local.dao.MoneyManagerDao
 import com.moneymanager.app.data.local.dao.StatementDao
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
@@ -32,6 +34,7 @@ import java.util.UUID
 @Database(
     entities = [
         CurrencyEntity::class,
+        AccountTypeEntity::class,
         AccountEntity::class,
         CategoryEntity::class,
         TagEntity::class,
@@ -44,7 +47,7 @@ import java.util.UUID
         GmailImportHistoryEntity::class,
         GmailSyncStateEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -66,7 +69,12 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "money_manager.db"
                 )
-                    .addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3, Migrations.MIGRATION_3_4)
+                    .addMigrations(
+                        Migrations.MIGRATION_1_2,
+                        Migrations.MIGRATION_2_3,
+                        Migrations.MIGRATION_3_4,
+                        Migrations.MIGRATION_4_5
+                    )
                     .addCallback(DatabaseCallback(scope))
                     .build()
                 INSTANCE = instance
@@ -132,6 +140,7 @@ abstract class AppDatabase : RoomDatabase() {
             )
 
             dao.insertCurrencies(listOf(inr, usd, eur, scapiaCoins))
+            dao.insertAccountTypes(AccountTypeDefaults.defaultEntities())
 
             // Seed Default Accounts
             val cashAcc = AccountEntity(
@@ -140,7 +149,8 @@ abstract class AppDatabase : RoomDatabase() {
                 accountType = AccountType.CASH,
                 currencyUid = inr.uid,
                 openingBalance = 0.0,
-                sortOrder = 1
+                sortOrder = 1,
+                accountTypeUid = AccountType.CASH.name
             )
             val savingsAcc = AccountEntity(
                 uid = "ACC_SAVINGS",
@@ -148,7 +158,8 @@ abstract class AppDatabase : RoomDatabase() {
                 accountType = AccountType.SAVINGS,
                 currencyUid = inr.uid,
                 openingBalance = 0.0,
-                sortOrder = 2
+                sortOrder = 2,
+                accountTypeUid = AccountType.SAVINGS.name
             )
             val creditCard = AccountEntity(
                 uid = "ACC_CC_DEMO",
@@ -160,7 +171,8 @@ abstract class AppDatabase : RoomDatabase() {
                 paymentDueDay = 3,
                 creditLimit = 150000.0,
                 settlementAccountUid = savingsAcc.uid,
-                sortOrder = 3
+                sortOrder = 3,
+                accountTypeUid = AccountType.CREDIT_CARD.name
             )
             dao.insertAccounts(listOf(cashAcc, savingsAcc, creditCard))
 

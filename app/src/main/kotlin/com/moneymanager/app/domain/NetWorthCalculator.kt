@@ -2,10 +2,12 @@ package com.moneymanager.app.domain
 
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
 import com.moneymanager.app.data.local.entity.CurrencyEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.resolvedIsLiability
 
 data class AccountBalanceItem(
     val account: AccountEntity,
@@ -27,12 +29,13 @@ object NetWorthCalculator {
     fun calculate(
         accounts: List<AccountWithCurrency>,
         transactions: List<TransactionEntity>,
-        mainCurrency: CurrencyEntity
+        mainCurrency: CurrencyEntity,
+        accountTypesMap: Map<String, AccountTypeEntity> = emptyMap()
     ): NetWorthSummary {
         // Pre-calculate raw native balance per account
         val balanceMap = mutableMapOf<String, Double>()
         for (acc in accounts) {
-            val initial = if (acc.account.accountType.isLiability) {
+            val initial = if (acc.account.resolvedIsLiability(accountTypesMap)) {
                 -acc.account.openingBalance
             } else {
                 acc.account.openingBalance
@@ -78,8 +81,9 @@ object NetWorthCalculator {
             val acc = accWithCurr.account
             val curr = accWithCurr.currency
             val rawBalance = balanceMap[acc.uid] ?: 0.0
+            val isLiability = acc.resolvedIsLiability(accountTypesMap)
 
-            val nativeBalance = if (acc.accountType.isLiability) {
+            val nativeBalance = if (isLiability) {
                 // For credit cards/loans, balance is reported as positive liability/debt
                 -rawBalance
             } else {
@@ -89,7 +93,7 @@ object NetWorthCalculator {
             val baseBalance = nativeBalance * curr.rateToBase
 
             if (acc.includeInNetWorth && !acc.isArchived) {
-                if (acc.accountType.isLiability) {
+                if (isLiability) {
                     totalLiabilities += maxOf(0.0, baseBalance)
                 } else {
                     totalAssets += baseBalance
@@ -122,9 +126,11 @@ object NetWorthCalculator {
     fun computeAdjustmentDifference(
         account: AccountEntity,
         currentNativeBalance: Double,
-        targetNativeBalance: Double
+        targetNativeBalance: Double,
+        isLiabilityOverride: Boolean? = null
     ): Double {
-        return if (account.accountType.isLiability) {
+        val isLiability = isLiabilityOverride ?: account.accountType.isLiability
+        return if (isLiability) {
             // For credit card/loan, if current debt is 5000 and target debt is 4000,
             // ledger balance changes from -5000 to -4000, which is +1000 difference
             -(targetNativeBalance - currentNativeBalance)

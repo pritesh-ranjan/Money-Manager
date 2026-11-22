@@ -15,12 +15,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Key
@@ -31,22 +36,28 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
 import com.moneymanager.app.domain.AppLockManager
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
@@ -57,6 +68,7 @@ import java.util.UUID
 enum class SettingsSubScreen {
     ROOT,
     CATEGORIES,
+    ACCOUNT_TYPES,
     CURRENCIES,
     APPEARANCE,
     SECURITY,
@@ -74,6 +86,8 @@ fun ManageScreen(
 ) {
     val expenseCategories by viewModel.expenseCategories.collectAsState()
     val incomeCategories by viewModel.incomeCategories.collectAsState()
+    val allAccountTypes by viewModel.accountTypes.collectAsState()
+    val allAccounts by viewModel.accounts.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val allTags by viewModel.allTags.collectAsState()
     val currentThemeMode by ThemePreferenceManager.themeMode.collectAsState()
@@ -84,6 +98,9 @@ fun ManageScreen(
 
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     var parentUidForNewSubcategory by remember { mutableStateOf<String?>(null) }
+    var showAddEditAccountTypeDialog by remember { mutableStateOf(false) }
+    var accountTypeToEdit by remember { mutableStateOf<AccountTypeEntity?>(null) }
+    var accountTypeToDelete by remember { mutableStateOf<AccountTypeEntity?>(null) }
     var showAddCurrencyDialog by remember { mutableStateOf(false) }
     var showAddTagDialog by remember { mutableStateOf(false) }
 
@@ -202,6 +219,20 @@ fun ManageScreen(
                                     )
                                 },
                                 onClick = { currentSubScreen = SettingsSubScreen.CATEGORIES }
+                            )
+
+                            OneUiInsetDivider(startIndent = 52.dp)
+
+                            OneUiListRow(
+                                title = "Account types",
+                                subtitle = "${allAccountTypes.size} types configured",
+                                leadingContent = {
+                                    OneUiIconBadge(
+                                        icon = Icons.Default.AccountBalance,
+                                        backgroundColor = OneUiTheme.colors.badgeBlue
+                                    )
+                                },
+                                onClick = { currentSubScreen = SettingsSubScreen.ACCOUNT_TYPES }
                             )
 
                             OneUiInsetDivider(startIndent = 52.dp)
@@ -708,6 +739,138 @@ fun ManageScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        SettingsSubScreen.ACCOUNT_TYPES -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(OneUiTheme.colors.background)
+                    .statusBarsPadding()
+            ) {
+                OneUiSubScreenTopBar(
+                    title = "Account types",
+                    onBack = { currentSubScreen = SettingsSubScreen.ROOT },
+                    actions = {
+                        IconButton(
+                            onClick = {
+                                accountTypeToEdit = null
+                                showAddEditAccountTypeDialog = true
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Account Type",
+                                tint = OneUiTheme.colors.textPrimary
+                            )
+                        }
+                    }
+                )
+
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 10.dp,
+                        bottom = 96.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    item {
+                        OneUiCard(
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp)
+                        ) {
+                            allAccountTypes.forEachIndexed { index, type ->
+                                val usageCount = allAccounts.count {
+                                    !it.account.isArchived && it.account.resolvedAccountTypeUid == type.uid
+                                }
+                                val (badgeIcon, badgeColor) = accountTypeVisuals(type.baseType)
+                                val behaviorSubtitle = buildString {
+                                    append(if (type.isLiability) "Liability" else "Asset")
+                                    append(" • ")
+                                    append(type.baseType.displayName)
+                                    if (usageCount > 0) {
+                                        append(" • ")
+                                        append(usageCount)
+                                        append(if (usageCount == 1) " account" else " accounts")
+                                    }
+                                }
+
+                                OneUiListRow(
+                                    title = type.name,
+                                    subtitle = behaviorSubtitle,
+                                    subtitleColor = if (type.isLiability) OneUiTheme.colors.expense else OneUiTheme.colors.primaryAccent,
+                                    leadingContent = {
+                                        OneUiIconBadge(
+                                            icon = badgeIcon,
+                                            backgroundColor = badgeColor
+                                        )
+                                    },
+                                    trailingContent = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(
+                                                onClick = {
+                                                    accountTypeToEdit = type
+                                                    showAddEditAccountTypeDialog = true
+                                                },
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "Edit account type",
+                                                    tint = OneUiTheme.colors.textSecondary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                            if (type.uid != AccountType.CREDIT_CARD.name) {
+                                                IconButton(
+                                                    onClick = {
+                                                        if (usageCount > 0) {
+                                                            viewModel.deleteAccountType(type)
+                                                        } else {
+                                                            accountTypeToDelete = type
+                                                        }
+                                                    },
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "Delete account type",
+                                                        tint = OneUiTheme.colors.textMuted,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        accountTypeToEdit = type
+                                        showAddEditAccountTypeDialog = true
+                                    }
+                                )
+
+                                if (index < allAccountTypes.lastIndex) {
+                                    OneUiInsetDivider(startIndent = 52.dp)
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        OneUiPillButton(
+                            text = "+ Add account type",
+                            onClick = {
+                                accountTypeToEdit = null
+                                showAddEditAccountTypeDialog = true
+                            },
+                            containerColor = OneUiTheme.colors.primaryAccent,
+                            contentColor = Color.White,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -1257,6 +1420,59 @@ fun ManageScreen(
         }
     }
 
+    // Add / Edit Account Type Dialog
+    if (showAddEditAccountTypeDialog) {
+        val editing = accountTypeToEdit
+        val usageCount = editing?.let { target ->
+            allAccounts.count { !it.account.isArchived && it.account.resolvedAccountTypeUid == target.uid }
+        } ?: 0
+
+        OneUiAddEditAccountTypeDialog(
+            existingType = editing,
+            existingAccountTypes = allAccountTypes,
+            usageCount = usageCount,
+            onDismiss = {
+                showAddEditAccountTypeDialog = false
+                accountTypeToEdit = null
+            },
+            onSave = { savedType ->
+                viewModel.saveAccountType(savedType)
+                showAddEditAccountTypeDialog = false
+                accountTypeToEdit = null
+            },
+            onDelete = if (editing != null && editing.uid != AccountType.CREDIT_CARD.name) {
+                { typeToDelete ->
+                    showAddEditAccountTypeDialog = false
+                    accountTypeToEdit = null
+                    if (usageCount > 0) {
+                        viewModel.deleteAccountType(typeToDelete)
+                    } else {
+                        accountTypeToDelete = typeToDelete
+                    }
+                }
+            } else null
+        )
+    }
+
+    // Confirm Delete Account Type Dialog
+    accountTypeToDelete?.let { typeToDelete ->
+        OneUiBottomDialog(
+            onDismissRequest = { accountTypeToDelete = null },
+            title = "Delete Account Type",
+            confirmButtonText = "Delete",
+            confirmButtonColor = OneUiTheme.colors.expense,
+            onConfirm = {
+                viewModel.deleteAccountType(typeToDelete)
+                accountTypeToDelete = null
+            }
+        ) {
+            Text(
+                text = "Are you sure you want to delete '${typeToDelete.name}'?",
+                color = OneUiTheme.colors.textSecondary
+            )
+        }
+    }
+
     // Add Category Dialog
     if (showAddCategoryDialog) {
         val currentCats = if (selectedCategoryTab == CategoryType.EXPENSE) expenseCategories else incomeCategories
@@ -1495,6 +1711,221 @@ fun OneUiAddCategoryDialog(
                 colors = tfColors,
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+    }
+}
+
+@Composable
+private fun accountTypeVisuals(baseType: AccountType): Pair<ImageVector, Color> {
+    return when (baseType) {
+        AccountType.SAVINGS, AccountType.UPI_DEBIT -> Icons.Default.AccountBalance to OneUiTheme.colors.badgeBlue
+        AccountType.CASH, AccountType.WALLET -> Icons.Default.AccountBalanceWallet to OneUiTheme.colors.badgeGreen
+        AccountType.CREDIT_CARD -> Icons.Default.CreditCard to OneUiTheme.colors.badgeIndigo
+        AccountType.INVESTMENT, AccountType.EQUITY, AccountType.MUTUAL_FUNDS ->
+            Icons.AutoMirrored.Filled.TrendingUp to OneUiTheme.colors.badgePurple
+        AccountType.LOAN -> Icons.Default.Savings to OneUiTheme.colors.expense
+        AccountType.OTHER -> Icons.Default.Savings to OneUiTheme.colors.badgeTeal
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OneUiAddEditAccountTypeDialog(
+    existingType: AccountTypeEntity? = null,
+    existingAccountTypes: List<AccountTypeEntity> = emptyList(),
+    usageCount: Int = 0,
+    onDismiss: () -> Unit,
+    onSave: (AccountTypeEntity) -> Unit,
+    onDelete: ((AccountTypeEntity) -> Unit)? = null
+) {
+    val isCreditCardSystemType = existingType?.uid == AccountType.CREDIT_CARD.name
+    var name by remember(existingType) { mutableStateOf(existingType?.name ?: "") }
+    var baseType by remember(existingType) { mutableStateOf(existingType?.baseType ?: AccountType.OTHER) }
+    var isLiability by remember(existingType) {
+        mutableStateOf(existingType?.isLiability ?: AccountType.OTHER.isLiability)
+    }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    val tfColors = TextFieldDefaults.colors(
+        focusedTextColor = OneUiTheme.colors.textPrimary,
+        unfocusedTextColor = OneUiTheme.colors.textPrimary,
+        focusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        unfocusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent
+    )
+
+    OneUiBottomDialog(
+        onDismissRequest = onDismiss,
+        title = if (existingType != null) "Edit Account Type" else "New Account Type",
+        confirmButtonText = if (existingType != null) "Update" else "Add",
+        onConfirm = {
+            val cleanName = name.trim()
+            if (cleanName.isBlank()) {
+                validationError = "Account type name cannot be empty"
+                return@OneUiBottomDialog
+            }
+
+            val duplicate = existingAccountTypes.any {
+                it.uid != (existingType?.uid ?: "") &&
+                    !it.isDeleted &&
+                    it.name.trim().equals(cleanName, ignoreCase = true)
+            }
+            if (duplicate) {
+                validationError = "An account type named '$cleanName' already exists"
+                return@OneUiBottomDialog
+            }
+
+            val effectiveLiability = if (baseType == AccountType.CREDIT_CARD) true else isLiability
+            onSave(
+                AccountTypeEntity(
+                    uid = existingType?.uid ?: UUID.randomUUID().toString(),
+                    name = cleanName,
+                    baseType = baseType,
+                    isLiability = effectiveLiability,
+                    isSystemDefault = existingType?.isSystemDefault ?: false,
+                    sortOrder = existingType?.sortOrder ?: 0,
+                    isDeleted = false
+                )
+            )
+        }
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (validationError != null) {
+                Text(
+                    text = validationError!!,
+                    color = OneUiTheme.colors.expense,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                )
+            }
+
+            TextField(
+                value = name,
+                onValueChange = {
+                    name = it
+                    validationError = null
+                },
+                label = { Text("Account Type Name") },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = tfColors,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            var behaviorExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = behaviorExpanded && !isCreditCardSystemType,
+                onExpandedChange = {
+                    if (!isCreditCardSystemType) {
+                        behaviorExpanded = !behaviorExpanded
+                    }
+                }
+            ) {
+                TextField(
+                    value = baseType.displayName,
+                    onValueChange = {},
+                    readOnly = true,
+                    enabled = !isCreditCardSystemType,
+                    label = { Text("Category / Behavior") },
+                    trailingIcon = {
+                        if (!isCreditCardSystemType) {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = behaviorExpanded)
+                        }
+                    },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = tfColors,
+                    modifier = Modifier
+                        .menuAnchor()
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = behaviorExpanded && !isCreditCardSystemType,
+                    onDismissRequest = { behaviorExpanded = false },
+                    modifier = Modifier.background(OneUiTheme.colors.surfaceElevated)
+                ) {
+                    AccountType.values().forEach { candidate ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OneUiRadioButton(
+                                        selected = baseType == candidate,
+                                        onClick = {
+                                            baseType = candidate
+                                            if (existingType == null) {
+                                                isLiability = candidate.isLiability
+                                            } else if (candidate == AccountType.CREDIT_CARD) {
+                                                isLiability = true
+                                            }
+                                            behaviorExpanded = false
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(candidate.displayName, color = OneUiTheme.colors.textPrimary)
+                                }
+                            },
+                            onClick = {
+                                baseType = candidate
+                                if (existingType == null) {
+                                    isLiability = candidate.isLiability
+                                } else if (candidate == AccountType.CREDIT_CARD) {
+                                    isLiability = true
+                                }
+                                behaviorExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (isCreditCardSystemType) {
+                Text(
+                    text = "Built-in Credit Card behavior is locked for billing & statement tracking",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = OneUiTheme.colors.textSecondary,
+                        fontSize = 12.sp
+                    )
+                )
+            }
+
+            val liabilityLocked = baseType == AccountType.CREDIT_CARD
+            OneUiListRow(
+                title = "Count as Liability",
+                subtitle = if (liabilityLocked) {
+                    "Deducted from Net Worth as debt (required for Credit Cards)"
+                } else {
+                    "Deducted from Net Worth as debt"
+                },
+                trailingContent = {
+                    OneUiSwitch(
+                        checked = if (liabilityLocked) true else isLiability,
+                        onCheckedChange = { checked ->
+                            if (!liabilityLocked) {
+                                isLiability = checked
+                            }
+                        },
+                        modifier = Modifier.alpha(if (liabilityLocked) 0.55f else 1f)
+                    )
+                }
+            )
+
+            if (existingType != null && onDelete != null) {
+                if (usageCount > 0) {
+                    Text(
+                        text = "In use by $usageCount active account${if (usageCount == 1) "" else "s"} — reassign accounts before deleting",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = OneUiTheme.colors.textSecondary,
+                            fontSize = 12.sp
+                        )
+                    )
+                }
+                OneUiPillButton(
+                    text = "Delete Account Type",
+                    onClick = { onDelete(existingType) },
+                    containerColor = OneUiTheme.colors.expenseContainer,
+                    contentColor = OneUiTheme.colors.expense,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }

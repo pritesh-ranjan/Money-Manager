@@ -706,6 +706,7 @@ fun OneUiSearchAndFilterScreen(
     val matchingTransactions by viewModel.transactions.collectAsState()
     val allTags by viewModel.allTags.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
+    val accountTypesMap by viewModel.accountTypesMap.collectAsState()
     val categoriesMap by viewModel.categoriesMap.collectAsState()
     val expenseCategories by viewModel.expenseCategories.collectAsState()
     val incomeCategories by viewModel.incomeCategories.collectAsState()
@@ -1274,6 +1275,7 @@ fun OneUiSearchAndFilterScreen(
                 AccountFilterSheet(
                     accounts = allAccounts,
                     initialSelectedUids = filterState.selectedAccountUids,
+                    accountTypesMap = accountTypesMap,
                     onApply = { uids ->
                         viewModel.setFilterAccounts(uids)
                         activeFilterSheet = null

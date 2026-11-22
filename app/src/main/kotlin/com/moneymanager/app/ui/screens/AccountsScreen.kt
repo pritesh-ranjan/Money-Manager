@@ -6,8 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,15 +33,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CurrencyEntity
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
+import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
+import com.moneymanager.app.data.local.entity.resolvedIsLiability
+import com.moneymanager.app.data.local.entity.resolvedTypeName
 import com.moneymanager.app.domain.AccountBalanceItem
 import com.moneymanager.app.domain.CurrencyFormatter
+import com.moneymanager.app.domain.DomainValidator
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
 import com.moneymanager.app.ui.theme.*
@@ -62,6 +67,8 @@ fun AccountsScreen(
     val netWorthSummary by viewModel.netWorth.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
+    val allAccountTypes by viewModel.accountTypes.collectAsState()
+    val accountTypesMap by viewModel.accountTypesMap.collectAsState()
 
     var selectedAccountUid by remember { mutableStateOf<String?>(null) }
     var showAdjustDialogFor by remember { mutableStateOf<AccountBalanceItem?>(null) }
@@ -196,6 +203,8 @@ fun AccountsScreen(
                                 item = balanceItem,
                                 badgeColor = badgePair.first,
                                 badgeIcon = badgePair.second,
+                                typeDisplayName = balanceItem.account.resolvedTypeName(accountTypesMap),
+                                isLiability = balanceItem.account.resolvedIsLiability(accountTypesMap),
                                 onClick = { selectedAccountUid = balanceItem.account.uid },
                                 onAdjustBalance = { showAdjustDialogFor = balanceItem }
                             )
@@ -226,6 +235,7 @@ fun AccountsScreen(
     if (showAddAccountDialog) {
         OneUiAddEditAccountDialog(
             existingAccount = null,
+            accountTypes = allAccountTypes,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { showAddAccountDialog = false },
@@ -240,6 +250,7 @@ fun AccountsScreen(
     accountToEdit?.let { acc ->
         OneUiAddEditAccountDialog(
             existingAccount = acc,
+            accountTypes = allAccountTypes,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { accountToEdit = null },
@@ -274,6 +285,8 @@ fun OneUiAccountDetailScreen(
     val categoriesMap by viewModel.categoriesMap.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val netWorthSummary by viewModel.netWorth.collectAsState()
+    val accountTypes by viewModel.accountTypes.collectAsState()
+    val accountTypesMap by viewModel.accountTypesMap.collectAsState()
 
     val balanceItem = netWorthSummary?.accountBalances?.firstOrNull { it.account.uid == account.uid }
     val nativeBalance = balanceItem?.nativeBalance ?: account.openingBalance
@@ -300,7 +313,9 @@ fun OneUiAccountDetailScreen(
 
     // Quick Edit Local State
     var quickName by remember(account) { mutableStateOf(account.name) }
-    var quickType by remember(account) { mutableStateOf(account.accountType) }
+    var quickTypeUid by remember(account) { mutableStateOf(account.resolvedAccountTypeUid) }
+    val selectedTypeEntity = accountTypes.firstOrNull { it.uid == quickTypeUid } ?: accountTypesMap[quickTypeUid]
+    val selectedBaseType = selectedTypeEntity?.baseType ?: account.accountType
     var quickStatementDay by remember(account) { mutableStateOf(account.statementDay?.toString() ?: "15") }
     var quickDueDay by remember(account) { mutableStateOf(account.paymentDueDay?.toString() ?: "5") }
     var quickLimit by remember(account) { mutableStateOf(account.creditLimit?.let { String.format(Locale.US, "%.0f", it) } ?: "100000") }
@@ -324,7 +339,7 @@ fun OneUiAccountDetailScreen(
 
     OneUiCollapsibleScaffold(
         title = account.name,
-        subtitle = "${account.accountType.displayName} • ${currency.isoCode}",
+        subtitle = "${account.resolvedTypeName(accountTypesMap)} • ${currency.isoCode}",
         expandedHeight = 155.dp,
         centeredExpandedTitle = true,
         navigationIcon = {
@@ -382,7 +397,7 @@ fun OneUiAccountDetailScreen(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
 
-                            val isLiability = account.accountType.isLiability
+                            val isLiability = account.resolvedIsLiability(accountTypesMap)
                             val balanceColor = if (isLiability) {
                                 if (nativeBalance > 0) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary
                             } else {
@@ -479,47 +494,26 @@ fun OneUiAccountDetailScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
 
-                            // Account Type Selector Chips
-                            Text(
-                                text = "Account Type",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    color = OneUiTheme.colors.textSecondary,
-                                    fontSize = 12.sp
-                                )
+                            // Account Type Selector (same unified options as Create/Edit Account)
+                            OneUiAccountTypeDropdown(
+                                accountTypes = accountTypes,
+                                selectedTypeUid = quickTypeUid,
+                                fallbackDisplayName = account.resolvedTypeName(accountTypesMap),
+                                onSelect = { type ->
+                                    quickTypeUid = type.uid
+                                    validationError = null
+                                    showSaveSuccess = false
+                                },
+                                textFieldColors = textFieldColors,
+                                cornerRadius = 16.dp
                             )
-                            val commonAccountTypes = listOf(
-                                AccountType.SAVINGS,
-                                AccountType.CREDIT_CARD,
-                                AccountType.CASH,
-                                AccountType.WALLET,
-                                AccountType.UPI_DEBIT,
-                                AccountType.MUTUAL_FUNDS,
-                                AccountType.EQUITY,
-                                AccountType.LOAN,
-                                AccountType.OTHER
-                            )
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(commonAccountTypes) { type ->
-                                    OneUiCapsuleChip(
-                                        label = type.displayName,
-                                        selected = quickType == type,
-                                        onClick = {
-                                            quickType = type
-                                            showSaveSuccess = false
-                                        }
-                                    )
-                                }
-                            }
 
                             // Credit Card specifics
-                            if (quickType == AccountType.CREDIT_CARD) {
+                            if (selectedBaseType == AccountType.CREDIT_CARD) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     TextField(
                                         value = quickStatementDay,
-                                        onValueChange = { quickStatementDay = it; showSaveSuccess = false },
+                                        onValueChange = { quickStatementDay = it; validationError = null; showSaveSuccess = false },
                                         label = { Text("Stmt Day (1-31)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
@@ -529,7 +523,7 @@ fun OneUiAccountDetailScreen(
                                     )
                                     TextField(
                                         value = quickDueDay,
-                                        onValueChange = { quickDueDay = it; showSaveSuccess = false },
+                                        onValueChange = { quickDueDay = it; validationError = null; showSaveSuccess = false },
                                         label = { Text("Due Day (1-31)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
@@ -541,7 +535,7 @@ fun OneUiAccountDetailScreen(
 
                                 TextField(
                                     value = quickLimit,
-                                    onValueChange = { quickLimit = it; showSaveSuccess = false },
+                                    onValueChange = { quickLimit = it; validationError = null; showSaveSuccess = false },
                                     label = { Text("Credit Limit") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     singleLine = true,
@@ -554,8 +548,15 @@ fun OneUiAccountDetailScreen(
                             // Opening Balance Field
                             TextField(
                                 value = quickOpeningBalance,
-                                onValueChange = { quickOpeningBalance = it; showSaveSuccess = false },
+                                onValueChange = {
+                                    quickOpeningBalance = it
+                                    validationError = null
+                                    showSaveSuccess = false
+                                },
                                 label = { Text("Opening Balance (${currency.symbol})") },
+                                placeholder = {
+                                    Text("Enter opening balance (e.g. 0.00)", color = OneUiTheme.colors.textMuted)
+                                },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 singleLine = true,
                                 shape = RoundedCornerShape(16.dp),
@@ -605,15 +606,36 @@ fun OneUiAccountDetailScreen(
                                     val stmtDay = quickStatementDay.toIntOrNull()
                                     val dueDay = quickDueDay.toIntOrNull()
                                     val limit = quickLimit.toDoubleOrNull()
-                                    val openingBal = quickOpeningBalance.toDoubleOrNull() ?: account.openingBalance
+                                    val openingBal = try {
+                                        DomainValidator.parseMandatoryOpeningBalance(quickOpeningBalance)
+                                    } catch (e: IllegalArgumentException) {
+                                        validationError = e.message
+                                        return@OneUiPillButton
+                                    }
+
+                                    if (selectedBaseType == AccountType.CREDIT_CARD) {
+                                        if (stmtDay != null && stmtDay !in 1..31) {
+                                            validationError = "Statement day must be between 1 and 31"
+                                            return@OneUiPillButton
+                                        }
+                                        if (dueDay != null && dueDay !in 1..31) {
+                                            validationError = "Payment due day must be between 1 and 31"
+                                            return@OneUiPillButton
+                                        }
+                                        if (limit != null && limit < 0.0) {
+                                            validationError = "Credit limit cannot be negative"
+                                            return@OneUiPillButton
+                                        }
+                                    }
 
                                     val updated = account.copy(
                                         name = cleanName,
-                                        accountType = quickType,
+                                        accountType = selectedBaseType,
+                                        accountTypeUid = selectedTypeEntity?.uid ?: quickTypeUid,
                                         openingBalance = openingBal,
-                                        statementDay = if (quickType == AccountType.CREDIT_CARD) stmtDay else null,
-                                        paymentDueDay = if (quickType == AccountType.CREDIT_CARD) dueDay else null,
-                                        creditLimit = if (quickType == AccountType.CREDIT_CARD) limit else null,
+                                        statementDay = if (selectedBaseType == AccountType.CREDIT_CARD) stmtDay else null,
+                                        paymentDueDay = if (selectedBaseType == AccountType.CREDIT_CARD) dueDay else null,
+                                        creditLimit = if (selectedBaseType == AccountType.CREDIT_CARD) limit else null,
                                         includeInNetWorth = quickIncludeInNetWorth
                                     )
 
@@ -760,6 +782,8 @@ fun OneUiAccountBalanceRow(
     item: AccountBalanceItem,
     badgeColor: Color,
     badgeIcon: ImageVector,
+    typeDisplayName: String = item.account.accountType.displayName,
+    isLiability: Boolean = item.account.accountType.isLiability,
     onClick: () -> Unit,
     onAdjustBalance: () -> Unit
 ) {
@@ -794,9 +818,9 @@ fun OneUiAccountBalanceRow(
             )
             Spacer(modifier = Modifier.height(2.dp))
             val subText = if (curr.isCustom) {
-                "${acc.accountType.displayName} • 1 ${curr.symbol} = ₹${curr.rateToBase}"
+                "$typeDisplayName • 1 ${curr.symbol} = ₹${curr.rateToBase}"
             } else {
-                acc.accountType.displayName
+                typeDisplayName
             }
             Text(
                 text = subText,
@@ -809,7 +833,6 @@ fun OneUiAccountBalanceRow(
 
         // Balance Column
         Column(horizontalAlignment = Alignment.End) {
-            val isLiability = acc.accountType.isLiability
             val balanceColor = if (isLiability) {
                 if (item.nativeBalance > 0) OneUiTheme.colors.expense else OneUiTheme.colors.textSecondary
             } else {
@@ -925,22 +948,113 @@ fun OneUiRevaluationAdjustmentDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+fun OneUiAccountTypeDropdown(
+    accountTypes: List<AccountTypeEntity>,
+    selectedTypeUid: String,
+    fallbackDisplayName: String,
+    onSelect: (AccountTypeEntity) -> Unit,
+    textFieldColors: TextFieldColors,
+    cornerRadius: Dp = 18.dp,
+    modifier: Modifier = Modifier
+) {
+    var typeExpanded by remember { mutableStateOf(false) }
+    val selectedType = accountTypes.firstOrNull { it.uid == selectedTypeUid }
+    val displayText = selectedType?.name ?: fallbackDisplayName
+
+    ExposedDropdownMenuBox(
+        expanded = typeExpanded,
+        onExpandedChange = { typeExpanded = !typeExpanded },
+        modifier = modifier
+    ) {
+        TextField(
+            value = displayText,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Account Type") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+            shape = RoundedCornerShape(cornerRadius),
+            colors = textFieldColors,
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth()
+        )
+        ExposedDropdownMenu(
+            expanded = typeExpanded,
+            onDismissRequest = { typeExpanded = false },
+            modifier = Modifier.background(OneUiTheme.colors.surfaceElevated)
+        ) {
+            accountTypes.forEach { type ->
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OneUiRadioButton(
+                                selected = selectedTypeUid == type.uid,
+                                onClick = {
+                                    onSelect(type)
+                                    typeExpanded = false
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = type.name,
+                                color = OneUiTheme.colors.textPrimary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (type.isLiability) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Liability",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = OneUiTheme.colors.expense,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        onSelect(type)
+                        typeExpanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun OneUiAddEditAccountDialog(
     existingAccount: AccountEntity? = null,
     defaultAccountType: AccountType = AccountType.SAVINGS,
+    accountTypes: List<AccountTypeEntity> = AccountTypeDefaults.defaultEntities(),
     currencies: List<CurrencyEntity>,
     existingAccounts: List<AccountEntity>,
     onDismiss: () -> Unit,
     onSave: (AccountEntity) -> Unit,
     onDelete: ((AccountEntity) -> Unit)? = null
 ) {
+    val resolvedInitialTypeUid = remember(existingAccount, defaultAccountType, accountTypes) {
+        existingAccount?.resolvedAccountTypeUid?.takeIf { uid ->
+            accountTypes.any { it.uid == uid }
+        }
+            ?: accountTypes.firstOrNull { it.uid == defaultAccountType.name }?.uid
+            ?: accountTypes.firstOrNull { it.baseType == defaultAccountType }?.uid
+            ?: accountTypes.firstOrNull()?.uid
+            ?: defaultAccountType.name
+    }
     var name by remember { mutableStateOf(existingAccount?.name ?: "") }
-    var selectedType by remember { mutableStateOf(existingAccount?.accountType ?: defaultAccountType) }
+    var selectedTypeUid by remember { mutableStateOf(resolvedInitialTypeUid) }
+    val selectedTypeEntity = accountTypes.firstOrNull { it.uid == selectedTypeUid }
+    val selectedBaseType = selectedTypeEntity?.baseType ?: existingAccount?.accountType ?: defaultAccountType
     var selectedCurrencyUid by remember {
         mutableStateOf(existingAccount?.currencyUid ?: currencies.firstOrNull { it.isMainCurrency }?.uid ?: currencies.firstOrNull()?.uid ?: "")
     }
     var openingBalanceStr by remember {
-        mutableStateOf(existingAccount?.let { String.format(Locale.US, "%.2f", it.openingBalance) } ?: "0.0")
+        mutableStateOf(existingAccount?.let { String.format(Locale.US, "%.2f", it.openingBalance) } ?: "")
     }
     var statementDayStr by remember {
         mutableStateOf(existingAccount?.statementDay?.toString() ?: if (defaultAccountType == AccountType.CREDIT_CARD) "15" else "")
@@ -989,7 +1103,7 @@ fun OneUiAddEditAccountDialog(
             val dueDay = dueDayStr.toIntOrNull()
             val limit = creditLimitStr.toDoubleOrNull()
 
-            if (selectedType == AccountType.CREDIT_CARD) {
+            if (selectedBaseType == AccountType.CREDIT_CARD) {
                 if (stmtDay != null && stmtDay !in 1..31) {
                     validationError = "Statement day must be between 1 and 31"
                     return@OneUiBottomDialog
@@ -1004,20 +1118,28 @@ fun OneUiAddEditAccountDialog(
                 }
             }
 
+            val openingBal = try {
+                DomainValidator.parseMandatoryOpeningBalance(openingBalanceStr)
+            } catch (e: IllegalArgumentException) {
+                validationError = e.message
+                return@OneUiBottomDialog
+            }
+
             onSave(
                 AccountEntity(
                     uid = existingAccount?.uid ?: UUID.randomUUID().toString(),
                     name = cleanName,
-                    accountType = selectedType,
+                    accountType = selectedBaseType,
                     currencyUid = selectedCurrencyUid,
-                    openingBalance = openingBalanceStr.toDoubleOrNull() ?: 0.0,
-                    statementDay = if (selectedType == AccountType.CREDIT_CARD) stmtDay else null,
-                    paymentDueDay = if (selectedType == AccountType.CREDIT_CARD) dueDay else null,
-                    creditLimit = if (selectedType == AccountType.CREDIT_CARD) limit else null,
-                    settlementAccountUid = if (selectedType == AccountType.CREDIT_CARD) settlementAccountUid else null,
+                    openingBalance = openingBal,
+                    statementDay = if (selectedBaseType == AccountType.CREDIT_CARD) stmtDay else null,
+                    paymentDueDay = if (selectedBaseType == AccountType.CREDIT_CARD) dueDay else null,
+                    creditLimit = if (selectedBaseType == AccountType.CREDIT_CARD) limit else null,
+                    settlementAccountUid = if (selectedBaseType == AccountType.CREDIT_CARD) settlementAccountUid else null,
                     includeInNetWorth = existingAccount?.includeInNetWorth ?: true,
                     sortOrder = existingAccount?.sortOrder ?: 0,
-                    isArchived = existingAccount?.isArchived ?: false
+                    isArchived = existingAccount?.isArchived ?: false,
+                    accountTypeUid = selectedTypeEntity?.uid ?: selectedTypeUid
                 )
             )
         }
@@ -1048,49 +1170,17 @@ fun OneUiAddEditAccountDialog(
             )
 
             // Account Type Selector
-            var typeExpanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = typeExpanded,
-                onExpandedChange = { typeExpanded = !typeExpanded }
-            ) {
-                TextField(
-                    value = selectedType.displayName,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Account Type") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
-                    shape = RoundedCornerShape(18.dp),
-                    colors = textFieldColors,
-                    modifier = Modifier.menuAnchor().fillMaxWidth()
-                )
-                ExposedDropdownMenu(
-                    expanded = typeExpanded,
-                    onDismissRequest = { typeExpanded = false },
-                    modifier = Modifier.background(OneUiTheme.colors.surfaceElevated)
-                ) {
-                    AccountType.values().forEach { type ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    OneUiRadioButton(
-                                        selected = selectedType == type,
-                                        onClick = {
-                                            selectedType = type
-                                            typeExpanded = false
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(type.displayName, color = OneUiTheme.colors.textPrimary)
-                                }
-                            },
-                            onClick = {
-                                selectedType = type
-                                typeExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
+            OneUiAccountTypeDropdown(
+                accountTypes = accountTypes,
+                selectedTypeUid = selectedTypeUid,
+                fallbackDisplayName = selectedBaseType.displayName,
+                onSelect = { type ->
+                    selectedTypeUid = type.uid
+                    validationError = null
+                },
+                textFieldColors = textFieldColors,
+                cornerRadius = 18.dp
+            )
 
             // Currency Selector
             var currExpanded by remember { mutableStateOf(false) }
@@ -1138,7 +1228,7 @@ fun OneUiAddEditAccountDialog(
                 }
             }
 
-            if (selectedType == AccountType.CREDIT_CARD) {
+            if (selectedBaseType == AccountType.CREDIT_CARD) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextField(
                         value = statementDayStr,
@@ -1185,8 +1275,14 @@ fun OneUiAddEditAccountDialog(
 
             TextField(
                 value = openingBalanceStr,
-                onValueChange = { openingBalanceStr = it },
+                onValueChange = {
+                    openingBalanceStr = it
+                    validationError = null
+                },
                 label = { Text("Opening Balance") },
+                placeholder = {
+                    Text("Enter opening balance (e.g. 0.00)", color = OneUiTheme.colors.textMuted)
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),

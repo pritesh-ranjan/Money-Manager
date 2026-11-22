@@ -460,6 +460,7 @@ fun OneUiMultiSelectSheetScaffold(
 fun AccountFilterSheet(
     accounts: List<AccountWithCurrency>,
     initialSelectedUids: Set<String>,
+    accountTypesMap: Map<String, AccountTypeEntity> = emptyMap(),
     onApply: (Set<String>) -> Unit,
     onDismissRequest: () -> Unit
 ) {
@@ -597,7 +598,7 @@ fun AccountFilterSheet(
 
                     items(groupAccs, key = { it.account.uid }) { accWithCurr ->
                         val isChecked = stagedUids.contains(accWithCurr.account.uid)
-                        val (cleanName, baseSubtitle) = getAccountDisplayInfo(accWithCurr.account)
+                        val (cleanName, baseSubtitle) = getAccountDisplayInfo(accWithCurr.account, accountTypesMap)
 
                         Row(
                             modifier = Modifier

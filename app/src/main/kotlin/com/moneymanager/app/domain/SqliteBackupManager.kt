@@ -8,6 +8,8 @@ import com.moneymanager.app.data.local.AppDatabase
 import com.moneymanager.app.data.local.dao.MoneyManagerDao
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
@@ -199,6 +201,37 @@ object SqliteBackupManager {
             }
         }
 
+        // 1b. Account Types
+        val accountTypes = mutableListOf<AccountTypeEntity>()
+        if (hasTable(db, "account_types")) {
+            db.rawQuery("SELECT * FROM account_types", null).use { c ->
+                while (c.moveToNext()) {
+                    val uid = c.getStringOrDefault("uid", UUID.randomUUID().toString())
+                    val name = c.getStringOrDefault("name", "Other")
+                    val baseTypeStr = c.getStringOrDefault("baseType", AccountType.OTHER.name)
+                    val baseType = try { AccountType.valueOf(baseTypeStr) } catch (_: Exception) { AccountType.OTHER }
+                    val isLiability = c.getIntOrDefault("isLiability", if (baseType.isLiability) 1 else 0) == 1
+                    val isSystemDefault = c.getIntOrDefault("isSystemDefault", 0) == 1
+                    val sortOrder = c.getIntOrDefault("sortOrder", 0)
+                    val isDeleted = c.getIntOrDefault("isDeleted", 0) == 1
+                    accountTypes.add(
+                        AccountTypeEntity(
+                            uid = uid,
+                            name = name,
+                            baseType = baseType,
+                            isLiability = isLiability,
+                            isSystemDefault = isSystemDefault,
+                            sortOrder = sortOrder,
+                            isDeleted = isDeleted
+                        )
+                    )
+                }
+            }
+        }
+        if (accountTypes.isEmpty()) {
+            accountTypes.addAll(AccountTypeDefaults.defaultEntities())
+        }
+
         // 2. Accounts
         val accounts = mutableListOf<AccountEntity>()
         if (hasTable(db, "accounts")) {
@@ -208,6 +241,7 @@ object SqliteBackupManager {
                     val name = c.getStringOrDefault("name", "Account")
                     val typeStr = c.getStringOrDefault("accountType", AccountType.SAVINGS.name)
                     val accountType = try { AccountType.valueOf(typeStr) } catch (_: Exception) { AccountType.SAVINGS }
+                    val accountTypeUid = c.getStringOrNull("accountTypeUid")?.takeIf { it.isNotBlank() } ?: accountType.name
                     val currencyUid = c.getStringOrDefault("currencyUid", currencies.firstOrNull()?.uid ?: "CURRENCY_INR")
                     val rawOpenBal = c.getDoubleOrDefault("openingBalance", 0.0)
                     val openBal = if (rawOpenBal.isFinite()) rawOpenBal else 0.0
@@ -219,6 +253,21 @@ object SqliteBackupManager {
                     val incNw = c.getIntOrDefault("includeInNetWorth", 1) == 1
                     val order = c.getIntOrDefault("sortOrder", 0)
                     val isArchived = c.getIntOrDefault("isArchived", 0) == 1
+
+                    if (accountTypes.none { it.uid == accountTypeUid }) {
+                        val fallbackDefault = AccountTypeDefaults.defaultEntities().firstOrNull { it.uid == accountTypeUid }
+                        accountTypes.add(
+                            fallbackDefault ?: AccountTypeEntity(
+                                uid = accountTypeUid,
+                                name = accountType.displayName,
+                                baseType = accountType,
+                                isLiability = accountType.isLiability,
+                                isSystemDefault = false,
+                                sortOrder = accountTypes.size + 1,
+                                isDeleted = false
+                            )
+                        )
+                    }
 
                     accounts.add(
                         AccountEntity(
@@ -234,7 +283,8 @@ object SqliteBackupManager {
                             linkedParentAccountUid = linkedUid,
                             includeInNetWorth = incNw,
                             sortOrder = order,
-                            isArchived = isArchived
+                            isArchived = isArchived,
+                            accountTypeUid = accountTypeUid
                         )
                     )
                 }
@@ -344,7 +394,8 @@ object SqliteBackupManager {
             accounts = accounts,
             transactions = transactions,
             tags = tags,
-            tagCrossRefs = crossRefs
+            tagCrossRefs = crossRefs,
+            accountTypes = accountTypes
         )
 
         return BackupRestoreResult(
@@ -468,7 +519,8 @@ object SqliteBackupManager {
                             linkedParentAccountUid = cardAssetUid,
                             includeInNetWorth = !isHiddenOrClosed,
                             isArchived = isHiddenOrClosed,
-                            sortOrder = order
+                            sortOrder = order,
+                            accountTypeUid = accountType.name
                         )
                     )
                 }
@@ -652,9 +704,10 @@ object SqliteBackupManager {
             accounts = accounts,
             transactions = transactions,
             tags = tags,
-            tagCrossRefs = crossRefs
+            tagCrossRefs = crossRefs,
+            accountTypes = AccountTypeDefaults.defaultEntities()
         )
-
+    
         return BackupRestoreResult(
             success = true,
             message = "Restored ${transactions.size} transactions, ${accounts.size} accounts, and ${categories.size} categories.",

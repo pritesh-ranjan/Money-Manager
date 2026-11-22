@@ -4,7 +4,10 @@ import com.moneymanager.app.data.local.dao.InsightsDao
 import com.moneymanager.app.data.local.dao.MoneyManagerDao
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
+import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
@@ -63,22 +66,84 @@ class MoneyManagerRepository(
         dao.deleteCurrency(currency)
     }
 
+    // --- Account Types ---
+    val allAccountTypes: Flow<List<AccountTypeEntity>> = dao.getAllAccountTypes()
+
+    suspend fun ensureDefaultAccountTypes() {
+        if (dao.getAllAccountTypesRaw().isEmpty()) {
+            dao.insertAccountTypes(AccountTypeDefaults.defaultEntities())
+        }
+    }
+
+    suspend fun saveAccountType(accountType: AccountTypeEntity) {
+        val existing = dao.getAllAccountTypesRaw()
+        val existingMatch = existing.firstOrNull { it.uid == accountType.uid }
+        val sanitized = accountType.copy(
+            name = accountType.name.trim(),
+            isLiability = if (accountType.baseType == AccountType.CREDIT_CARD) true else accountType.isLiability,
+            isSystemDefault = existingMatch?.isSystemDefault ?: accountType.isSystemDefault
+        )
+        DomainValidator.validateAccountType(sanitized, existing)
+
+        if (existingMatch != null) {
+            dao.updateAccountType(sanitized)
+            dao.updateAccountBaseTypeForTypeUid(sanitized.uid, sanitized.baseType)
+            if (sanitized.baseType != AccountType.CREDIT_CARD) {
+                dao.clearCreditCardFieldsForTypeUid(sanitized.uid)
+            }
+        } else {
+            val nextSortOrder = if (sanitized.sortOrder > 0) {
+                sanitized.sortOrder
+            } else {
+                (existing.maxOfOrNull { it.sortOrder } ?: 0) + 1
+            }
+            dao.insertAccountType(sanitized.copy(sortOrder = nextSortOrder))
+        }
+    }
+
+    suspend fun deleteAccountType(accountType: AccountTypeEntity) {
+        require(accountType.uid != AccountType.CREDIT_CARD.name) {
+            "Credit Card account type cannot be deleted"
+        }
+        val activeTypes = dao.getAllAccountTypesRaw().filter { !it.isDeleted }
+        require(activeTypes.size > 1) {
+            "At least one account type must remain"
+        }
+        val inUseCount = dao.countAccountsUsingAccountType(accountType.uid)
+        require(inUseCount == 0) {
+            "Cannot delete '${accountType.name}' because it is in use by $inUseCount active account(s)"
+        }
+        dao.softDeleteAccountType(accountType.uid)
+    }
+
     // --- Accounts ---
     val accountsWithCurrency: Flow<List<AccountWithCurrency>> = dao.getAllAccountsWithCurrency()
 
     suspend fun saveAccount(account: AccountEntity) {
         val existing = dao.getAllAccountsRaw()
         val currency = dao.getCurrencyById(account.currencyUid)
-        DomainValidator.validateAccount(account, existing, currencyExists = currency != null)
+        val accountTypesMap = dao.getAllAccountTypesRaw().associateBy { it.uid }
+        val resolvedTypeUid = account.accountTypeUid?.takeIf { it.isNotBlank() } ?: account.accountType.name
+        val resolvedBaseType = accountTypesMap[resolvedTypeUid]?.baseType ?: account.accountType
+        val normalizedAccount = account.copy(
+            accountType = resolvedBaseType,
+            accountTypeUid = resolvedTypeUid
+        )
+        DomainValidator.validateAccount(
+            account = normalizedAccount,
+            existingAccounts = existing,
+            currencyExists = currency != null,
+            accountTypesMap = accountTypesMap
+        )
 
-        val sanitized = if (account.accountType != AccountType.CREDIT_CARD) {
-            account.copy(
+        val sanitized = if (normalizedAccount.accountType != AccountType.CREDIT_CARD) {
+            normalizedAccount.copy(
                 statementDay = null,
                 paymentDueDay = null,
                 creditLimit = null,
                 settlementAccountUid = null
             )
-        } else account
+        } else normalizedAccount
 
         val isExisting = existing.any { it.uid == sanitized.uid }
         if (isExisting) {
@@ -221,14 +286,16 @@ class MoneyManagerRepository(
     val netWorthSummary: Flow<NetWorthSummary?> = combine(
         dao.getAllAccountsWithCurrency(),
         dao.getAllTransactions(),
-        dao.getAllCurrencies()
-    ) { accounts, transactionsWithDetails, currencies ->
+        dao.getAllCurrencies(),
+        dao.getAllAccountTypes()
+    ) { accounts, transactionsWithDetails, currencies, accountTypes ->
         val mainCurrency = currencies.firstOrNull { it.isMainCurrency } ?: currencies.firstOrNull()
         if (mainCurrency == null) {
             null
         } else {
             val rawTxs = transactionsWithDetails.map { it.transaction }
-            NetWorthCalculator.calculate(accounts, rawTxs, mainCurrency)
+            val typesMap = accountTypes.associateBy { it.uid }
+            NetWorthCalculator.calculate(accounts, rawTxs, mainCurrency, typesMap)
         }
     }
 
@@ -255,7 +322,13 @@ class MoneyManagerRepository(
         targetBalance: Double,
         note: String = "Balance Adjustment"
     ) {
-        val diff = NetWorthCalculator.computeAdjustmentDifference(account, currentBalance, targetBalance)
+        val typeEntity = dao.getAccountTypeById(account.resolvedAccountTypeUid)
+        val diff = NetWorthCalculator.computeAdjustmentDifference(
+            account = account,
+            currentNativeBalance = currentBalance,
+            targetNativeBalance = targetBalance,
+            isLiabilityOverride = typeEntity?.isLiability
+        )
         if (Math.abs(diff) < 0.0001) return
 
         val baseDiff = diff * currency.rateToBase

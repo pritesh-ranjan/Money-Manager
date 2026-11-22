@@ -5,12 +5,15 @@ import com.moneymanager.app.data.FakeMoneyManagerDao
 import com.moneymanager.app.data.MoneyManagerRepository
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.resolvedTypeName
+import com.moneymanager.app.notifications.QuickAddNotificationManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -513,5 +516,196 @@ class AccountAndCardCrudValidationTest {
 
         // Cross refs must be cleaned up
         assertFalse(dao.crossRefsFlow.value.any { it.tagUid == "t1" })
+    }
+
+    // =========================================================================
+    // ACCOUNT TYPE CRUD, VALIDATION & NET WORTH PROPAGATION TESTS
+    // =========================================================================
+
+    @Test
+    fun testAccountTypeCrud_createAssignUpdateAndSoftDelete() = runTest {
+        val customType = AccountTypeEntity(
+            uid = "type_crypto",
+            name = "Crypto Exchange",
+            baseType = AccountType.INVESTMENT,
+            isLiability = false
+        )
+        repository.saveAccountType(customType)
+
+        val typesAfterCreate = repository.allAccountTypes.first()
+        assertTrue(typesAfterCreate.any { it.uid == "type_crypto" && it.name == "Crypto Exchange" })
+
+        val cryptoAcc = AccountEntity(
+            uid = "acc_crypto",
+            name = "CoinDCX",
+            accountType = AccountType.INVESTMENT,
+            currencyUid = inr.uid,
+            openingBalance = 20000.0,
+            accountTypeUid = "type_crypto"
+        )
+        repository.saveAccount(cryptoAcc)
+
+        val typesMap = typesAfterCreate.associateBy { it.uid }
+        assertEquals("Crypto Exchange", dao.getAccountWithCurrencyById("acc_crypto")!!.account.resolvedTypeName(typesMap))
+
+        // Cannot delete while in use by an active account
+        try {
+            repository.deleteAccountType(customType)
+            fail("Expected IllegalArgumentException when deleting in-use account type")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("in use by", ignoreCase = true))
+        }
+
+        // Rename & flip liability flag; verify NetWorthCalculator reflects updated liability status
+        val updatedType = customType.copy(name = "Margin Debt", isLiability = true)
+        repository.saveAccountType(updatedType)
+
+        val nw = repository.netWorthSummary.first()!!
+        assertEquals(0.0, nw.totalAssetsBase, 0.001)
+        assertEquals(20000.0, nw.totalLiabilitiesBase, 0.001)
+        assertEquals(-20000.0, nw.netWorthBase, 0.001)
+
+        // Move account to standard savings so custom type becomes unused, then soft delete
+        repository.saveAccount(
+            cryptoAcc.copy(
+                accountType = AccountType.SAVINGS,
+                accountTypeUid = AccountType.SAVINGS.name
+            )
+        )
+        repository.deleteAccountType(updatedType)
+
+        val activeTypes = repository.allAccountTypes.first()
+        assertFalse(activeTypes.any { it.uid == "type_crypto" })
+        assertTrue(dao.getAllAccountTypesRaw().first { it.uid == "type_crypto" }.isDeleted)
+    }
+
+    @Test
+    fun testAccountTypeUpdate_baseTypePropagatesToLinkedAccounts() = runTest {
+        val customCardType = AccountTypeEntity(
+            uid = "type_bnpl",
+            name = "BNPL Line",
+            baseType = AccountType.CREDIT_CARD,
+            isLiability = true
+        )
+        repository.saveAccountType(customCardType)
+
+        val bnplAcc = AccountEntity(
+            uid = "acc_bnpl",
+            name = "Simpl Pay",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            openingBalance = 3000.0,
+            statementDay = 15,
+            paymentDueDay = 5,
+            creditLimit = 15000.0,
+            accountTypeUid = "type_bnpl"
+        )
+        repository.saveAccount(bnplAcc)
+
+        // Reclassify custom type from CREDIT_CARD to LOAN -> propagates baseType and clears card fields
+        repository.saveAccountType(customCardType.copy(baseType = AccountType.LOAN, isLiability = true))
+
+        val updatedAcc = dao.getAccountWithCurrencyById("acc_bnpl")!!.account
+        assertEquals(AccountType.LOAN, updatedAcc.accountType)
+        assertNull(updatedAcc.statementDay)
+        assertNull(updatedAcc.paymentDueDay)
+        assertNull(updatedAcc.creditLimit)
+    }
+
+    @Test
+    fun testAccountTypeValidation_rejectsBlankDuplicateInvalidCreditCardAndProtectedDeletes() = runTest {
+        // Blank name rejected
+        try {
+            repository.saveAccountType(AccountTypeEntity("t_blank", "   ", AccountType.OTHER, false))
+            fail("Expected IllegalArgumentException for blank account type name")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("cannot be empty", ignoreCase = true))
+        }
+
+        // Case-insensitive duplicate rejected
+        try {
+            repository.saveAccountType(AccountTypeEntity("t_dup", "  cash  ", AccountType.CASH, false))
+            fail("Expected IllegalArgumentException for duplicate account type name")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("already exists", ignoreCase = true))
+        }
+
+        // Direct DomainValidator rejects CREDIT_CARD with isLiability = false
+        try {
+            DomainValidator.validateAccountType(
+                AccountTypeEntity("t_bad_cc", "Bad Card Type", AccountType.CREDIT_CARD, isLiability = false),
+                emptyList()
+            )
+            fail("Expected IllegalArgumentException for non-liability Credit Card type")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("liability", ignoreCase = true))
+        }
+
+        // Built-in CREDIT_CARD cannot change baseType away from CREDIT_CARD
+        val builtInCard = dao.getAccountTypeById(AccountType.CREDIT_CARD.name)!!
+        try {
+            repository.saveAccountType(builtInCard.copy(baseType = AccountType.SAVINGS, isLiability = false))
+            fail("Expected IllegalArgumentException when changing built-in CREDIT_CARD baseType")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("Credit Card", ignoreCase = true))
+        }
+
+        // Built-in CREDIT_CARD cannot be deleted
+        try {
+            repository.deleteAccountType(builtInCard)
+            fail("Expected IllegalArgumentException when deleting built-in CREDIT_CARD")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("cannot be deleted", ignoreCase = true))
+        }
+
+        // Cannot delete the last remaining non-deleted type
+        val singleDao = FakeMoneyManagerDao()
+        singleDao.accountTypesFlow.value = listOf(
+            AccountTypeEntity("ONLY_SAVINGS", "Only Savings", AccountType.SAVINGS, isLiability = false)
+        )
+        val singleRepo = MoneyManagerRepository(singleDao)
+        try {
+            singleRepo.deleteAccountType(singleDao.accountTypesFlow.value.first())
+            fail("Expected IllegalArgumentException when deleting last remaining account type")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("At least one account type must remain", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun testParseMandatoryOpeningBalance_rejectsEmptyOrInvalidAndAcceptsValidNumbers() {
+        val invalidInputs = listOf("", "   ", "abc", "NaN", "Infinity", "-Infinity")
+        for (bad in invalidInputs) {
+            try {
+                DomainValidator.parseMandatoryOpeningBalance(bad)
+                fail("Expected IllegalArgumentException for '$bad'")
+            } catch (e: IllegalArgumentException) {
+                assertTrue(e.message!!.isNotBlank())
+            }
+        }
+
+        assertEquals(0.0, DomainValidator.parseMandatoryOpeningBalance("0"), 0.0001)
+        assertEquals(0.0, DomainValidator.parseMandatoryOpeningBalance("0.0"), 0.0001)
+        assertEquals(12500.50, DomainValidator.parseMandatoryOpeningBalance("12500.50"), 0.0001)
+        assertEquals(-250.75, DomainValidator.parseMandatoryOpeningBalance("-250.75"), 0.0001)
+        assertEquals(500.0, DomainValidator.parseMandatoryOpeningBalance(" 500 "), 0.0001)
+    }
+
+    @Test
+    fun testShortcutActionResolution_mapsQuickAddActionsCorrectly() {
+        assertEquals(
+            TransactionType.EXPENSE,
+            QuickAddNotificationManager.resolveTransactionType(QuickAddNotificationManager.ACTION_QUICK_ADD_EXPENSE)
+        )
+        assertEquals(
+            TransactionType.INCOME,
+            QuickAddNotificationManager.resolveTransactionType(QuickAddNotificationManager.ACTION_QUICK_ADD_INCOME)
+        )
+        assertEquals(
+            TransactionType.TRANSFER,
+            QuickAddNotificationManager.resolveTransactionType(QuickAddNotificationManager.ACTION_QUICK_ADD_TRANSFER)
+        )
+        assertNull(QuickAddNotificationManager.resolveTransactionType(null as String?))
+        assertNull(QuickAddNotificationManager.resolveTransactionType("android.intent.action.MAIN"))
     }
 }

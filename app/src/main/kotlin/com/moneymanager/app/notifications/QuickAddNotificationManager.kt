@@ -164,7 +164,11 @@ object QuickAddNotificationManager {
     }
 
     fun resolveTransactionType(intent: Intent?): TransactionType? {
-        return when (intent?.action) {
+        return resolveTransactionType(intent?.action)
+    }
+
+    fun resolveTransactionType(action: String?): TransactionType? {
+        return when (action) {
             ACTION_QUICK_ADD_EXPENSE -> TransactionType.EXPENSE
             ACTION_QUICK_ADD_INCOME -> TransactionType.INCOME
             ACTION_QUICK_ADD_TRANSFER -> TransactionType.TRANSFER

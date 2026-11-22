@@ -8,6 +8,9 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import com.moneymanager.app.data.local.entity.AccountEntity
+import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
@@ -56,6 +59,38 @@ interface MoneyManagerDao {
 
     @Delete
     suspend fun deleteCurrency(currency: CurrencyEntity)
+
+
+    // --- Account Types ---
+    @Query("SELECT * FROM account_types WHERE isDeleted = 0 ORDER BY sortOrder ASC, name ASC")
+    fun getAllAccountTypes(): Flow<List<AccountTypeEntity>>
+
+    @Query("SELECT * FROM account_types")
+    suspend fun getAllAccountTypesRaw(): List<AccountTypeEntity>
+
+    @Query("SELECT * FROM account_types WHERE uid = :uid LIMIT 1")
+    suspend fun getAccountTypeById(uid: String): AccountTypeEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAccountType(accountType: AccountTypeEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAccountTypes(accountTypes: List<AccountTypeEntity>)
+
+    @Update
+    suspend fun updateAccountType(accountType: AccountTypeEntity)
+
+    @Query("UPDATE account_types SET isDeleted = 1 WHERE uid = :uid")
+    suspend fun softDeleteAccountType(uid: String)
+
+    @Query("SELECT COUNT(*) FROM accounts WHERE isArchived = 0 AND (accountTypeUid = :typeUid OR (accountTypeUid IS NULL AND accountType = :typeUid))")
+    suspend fun countAccountsUsingAccountType(typeUid: String): Int
+
+    @Query("UPDATE accounts SET accountType = :baseType WHERE accountTypeUid = :typeUid")
+    suspend fun updateAccountBaseTypeForTypeUid(typeUid: String, baseType: AccountType)
+
+    @Query("UPDATE accounts SET statementDay = NULL, paymentDueDay = NULL, creditLimit = NULL, settlementAccountUid = NULL WHERE accountTypeUid = :typeUid")
+    suspend fun clearCreditCardFieldsForTypeUid(typeUid: String)
 
 
     // --- Accounts ---
@@ -268,6 +303,9 @@ interface MoneyManagerDao {
     @Query("DELETE FROM currencies")
     suspend fun clearAllCurrencies()
 
+    @Query("DELETE FROM account_types")
+    suspend fun clearAllAccountTypes()
+
     @Transaction
     suspend fun replaceAllBackupData(
         currencies: List<CurrencyEntity>,
@@ -275,15 +313,19 @@ interface MoneyManagerDao {
         accounts: List<AccountEntity>,
         transactions: List<TransactionEntity>,
         tags: List<TagEntity> = emptyList(),
-        tagCrossRefs: List<TransactionTagCrossRef> = emptyList()
+        tagCrossRefs: List<TransactionTagCrossRef> = emptyList(),
+        accountTypes: List<AccountTypeEntity> = AccountTypeDefaults.defaultEntities()
     ) {
         clearAllTransactionTags()
         clearAllTransactions()
         clearAllAccounts()
+        clearAllAccountTypes()
         clearAllCategories()
         clearAllTags()
         clearAllCurrencies()
 
+        val typesToInsert = accountTypes.ifEmpty { AccountTypeDefaults.defaultEntities() }
+        insertAccountTypes(typesToInsert)
         if (currencies.isNotEmpty()) insertCurrencies(currencies)
         if (categories.isNotEmpty()) insertCategories(categories)
         if (accounts.isNotEmpty()) insertAccounts(accounts)

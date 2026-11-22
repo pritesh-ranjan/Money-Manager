@@ -36,6 +36,8 @@ import com.moneymanager.app.data.local.entity.GmailImportHistoryEntity
 import com.moneymanager.app.data.local.entity.GmailSyncStateEntity
 import com.moneymanager.app.data.local.entity.GmailSyncStatus
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
 import com.moneymanager.app.domain.cards.CreditCardMappingStorage
@@ -177,6 +179,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val gmailSyncRules: StateFlow<GmailSyncRules> = _gmailSyncRules.asStateFlow()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.ensureDefaultAccountTypes()
+        }
         loadPdfPasswords()
         loadOAuthCredentialsState()
         loadSyncSinceState()
@@ -308,6 +313,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val accounts: StateFlow<List<AccountWithCurrency>> = repository.accountsWithCurrency
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val accountTypes: StateFlow<List<AccountTypeEntity>> = repository.allAccountTypes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AccountTypeDefaults.defaultEntities())
+
+    val accountTypesMap: StateFlow<Map<String, AccountTypeEntity>> = accountTypes
+        .map { list -> list.associateBy { it.uid } }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            AccountTypeDefaults.defaultEntities().associateBy { it.uid }
+        )
 
     val allCurrencies: StateFlow<List<CurrencyEntity>> = repository.allCurrencies
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -709,6 +725,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiMessage.value = UiMessage.Success("Paid ${String.format("%.2f", amount)} towards ${cardSummary.cardName}")
             } catch (e: Exception) {
                 _uiMessage.value = UiMessage.Error("Payment failed: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    // --- Account Type Management ---
+    fun saveAccountType(accountType: AccountTypeEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.saveAccountType(accountType)
+                _uiMessage.value = UiMessage.Success("Account type '${accountType.name.trim()}' saved")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to save account type: ${e.localizedMessage ?: e.message}")
+            }
+        }
+    }
+
+    fun deleteAccountType(accountType: AccountTypeEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.deleteAccountType(accountType)
+                _uiMessage.value = UiMessage.Success("Account type '${accountType.name}' deleted")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to delete account type: ${e.localizedMessage ?: e.message}")
             }
         }
     }

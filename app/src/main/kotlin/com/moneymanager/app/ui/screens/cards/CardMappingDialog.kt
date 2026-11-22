@@ -54,6 +54,7 @@ fun CardMappingDialog(
 ) {
     val context = LocalContext.current
     val cardMappings by viewModel.cardMappings.collectAsState()
+    val accountTypesMap by viewModel.accountTypesMap.collectAsState()
     val creditCardAccounts = remember(allAccounts) {
         allAccounts.filter { it.account.accountType == AccountType.CREDIT_CARD }
     }
@@ -254,6 +255,7 @@ fun CardMappingDialog(
             title = "Map ${targetCard.bankName} Card ($last4Text)",
             accounts = allAccounts,
             selectedUid = targetCard.mappedAccountUid ?: "",
+            accountTypesMap = accountTypesMap,
             typeColor = OneUiTheme.colors.primaryAccent,
             initialFilter = "Cards",
             allowedAccountTypes = setOf(AccountType.CREDIT_CARD),

@@ -2,12 +2,14 @@ package com.moneymanager.app.domain
 
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.resolvedIsLiability
 
 object DomainValidator {
 
@@ -75,10 +77,39 @@ object DomainValidator {
         }
     }
 
+    fun validateAccountType(
+        accountType: AccountTypeEntity,
+        existingAccountTypes: List<AccountTypeEntity>
+    ) {
+        val trimmedName = accountType.name.trim()
+        require(accountType.uid.isNotBlank()) { "Account type UID cannot be blank" }
+        require(trimmedName.isNotEmpty()) { "Account type name cannot be empty" }
+
+        val duplicate = existingAccountTypes.any {
+            it.uid != accountType.uid &&
+                !it.isDeleted &&
+                it.name.trim().equals(trimmedName, ignoreCase = true)
+        }
+        require(!duplicate) { "An account type named '$trimmedName' already exists" }
+
+        if (accountType.baseType == AccountType.CREDIT_CARD) {
+            require(accountType.isLiability) {
+                "Credit Card account types must be marked as a liability"
+            }
+        }
+
+        if (accountType.uid == AccountType.CREDIT_CARD.name) {
+            require(accountType.baseType == AccountType.CREDIT_CARD && accountType.isLiability) {
+                "Built-in Credit Card account type must retain Credit Card behavior and liability status"
+            }
+        }
+    }
+
     fun validateAccount(
         account: AccountEntity,
         existingAccounts: List<AccountEntity>,
-        currencyExists: Boolean
+        currencyExists: Boolean,
+        accountTypesMap: Map<String, AccountTypeEntity> = emptyMap()
     ) {
         val trimmedName = account.name.trim()
         require(trimmedName.isNotEmpty()) { "Account name cannot be empty" }
@@ -105,7 +136,7 @@ object DomainValidator {
                 require(settlementUid != account.uid) { "Credit card cannot settle from itself" }
                 val settlementAcc = existingAccounts.firstOrNull { it.uid == settlementUid }
                 settlementAcc?.let {
-                    require(!it.accountType.isLiability) {
+                    require(!it.resolvedIsLiability(accountTypesMap)) {
                         "Settlement account cannot be a liability (got ${it.accountType})"
                     }
                 }
@@ -115,6 +146,14 @@ object DomainValidator {
         account.linkedParentAccountUid?.let { parentUid ->
             require(parentUid != account.uid) { "Account cannot link to itself as parent" }
         }
+    }
+
+    fun parseMandatoryOpeningBalance(rawInput: String): Double {
+        val trimmed = rawInput.trim()
+        require(trimmed.isNotEmpty()) { "Opening balance is required" }
+        val value = trimmed.toDoubleOrNull()
+        require(value != null && value.isFinite()) { "Please enter a valid opening balance" }
+        return value
     }
 
     fun validateCategory(

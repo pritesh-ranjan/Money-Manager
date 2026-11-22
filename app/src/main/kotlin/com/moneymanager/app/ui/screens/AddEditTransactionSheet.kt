@@ -82,6 +82,8 @@ fun AddEditTransactionSheet(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val allAccounts by viewModel.accounts.collectAsState()
+    val allAccountTypes by viewModel.accountTypes.collectAsState()
+    val accountTypesMap by viewModel.accountTypesMap.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val expenseCategories by viewModel.expenseCategories.collectAsState()
     val incomeCategories by viewModel.incomeCategories.collectAsState()
@@ -990,6 +992,7 @@ fun AddEditTransactionSheet(
                                         accounts = allAccounts,
                                         selectedUid = selectedAccountUid,
                                         allTransactions = allTransactions,
+                                        accountTypesMap = accountTypesMap,
                                         typeColor = typeColor,
                                         onClose = { activeField = ActiveTransactionField.NONE },
                                         onSelect = { uid ->
@@ -1018,6 +1021,7 @@ fun AddEditTransactionSheet(
                                         accounts = destinationAccounts,
                                         selectedUid = selectedToAccountUid,
                                         allTransactions = allTransactions,
+                                        accountTypesMap = accountTypesMap,
                                         typeColor = typeColor,
                                         onClose = { activeField = ActiveTransactionField.NONE },
                                         onSelect = { uid ->
@@ -1082,6 +1086,7 @@ fun AddEditTransactionSheet(
         OneUiAddEditAccountDialog(
             existingAccount = null,
             defaultAccountType = addAccountDefaultType,
+            accountTypes = allAccountTypes,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { showAddAccountDialog = false },

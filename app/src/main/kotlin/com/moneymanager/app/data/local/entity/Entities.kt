@@ -22,6 +22,37 @@ enum class AccountType(val displayName: String, val isLiability: Boolean) {
     OTHER("Other", false)
 }
 
+@Entity(
+    tableName = "account_types",
+    indices = [Index(value = ["sortOrder"])]
+)
+data class AccountTypeEntity(
+    @PrimaryKey
+    val uid: String,
+    val name: String,
+    val baseType: AccountType = AccountType.OTHER,
+    val isLiability: Boolean = false,
+    val isSystemDefault: Boolean = false,
+    val sortOrder: Int = 0,
+    val isDeleted: Boolean = false
+)
+
+object AccountTypeDefaults {
+    fun defaultEntities(): List<AccountTypeEntity> {
+        return AccountType.values().mapIndexed { index, type ->
+            AccountTypeEntity(
+                uid = type.name,
+                name = type.displayName,
+                baseType = type,
+                isLiability = type.isLiability,
+                isSystemDefault = true,
+                sortOrder = index + 1,
+                isDeleted = false
+            )
+        }
+    }
+}
+
 enum class TransactionType(val displayName: String) {
     EXPENSE("Expense"),
     INCOME("Income"),
@@ -81,8 +112,20 @@ data class AccountEntity(
     val linkedParentAccountUid: String? = null,
     val includeInNetWorth: Boolean = true,
     val sortOrder: Int = 0,
-    val isArchived: Boolean = false
+    val isArchived: Boolean = false,
+    val accountTypeUid: String? = null
 )
+
+val AccountEntity.resolvedAccountTypeUid: String
+    get() = accountTypeUid ?: accountType.name
+
+fun AccountEntity.resolvedTypeName(accountTypesMap: Map<String, AccountTypeEntity>): String {
+    return accountTypesMap[resolvedAccountTypeUid]?.name ?: accountType.displayName
+}
+
+fun AccountEntity.resolvedIsLiability(accountTypesMap: Map<String, AccountTypeEntity>): Boolean {
+    return accountTypesMap[resolvedAccountTypeUid]?.isLiability ?: accountType.isLiability
+}
 
 @Entity(
     tableName = "categories",

@@ -156,4 +156,45 @@ object Migrations {
             """.trimIndent())
         }
     }
+
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS `account_types` (
+                    `uid` TEXT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `baseType` TEXT NOT NULL,
+                    `isLiability` INTEGER NOT NULL,
+                    `isSystemDefault` INTEGER NOT NULL,
+                    `sortOrder` INTEGER NOT NULL,
+                    `isDeleted` INTEGER NOT NULL,
+                    PRIMARY KEY(`uid`)
+                )
+            """.trimIndent())
+
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_account_types_sortOrder` ON `account_types` (`sortOrder`)")
+
+            val defaults = listOf(
+                arrayOf<Any>("CASH", "Cash", "CASH", 0, 1, 1, 0),
+                arrayOf<Any>("SAVINGS", "Bank / Savings", "SAVINGS", 0, 1, 2, 0),
+                arrayOf<Any>("WALLET", "Wallet / Prepaid", "WALLET", 0, 1, 3, 0),
+                arrayOf<Any>("CREDIT_CARD", "Credit Card", "CREDIT_CARD", 1, 1, 4, 0),
+                arrayOf<Any>("INVESTMENT", "Fixed Deposit / PPF / SGB", "INVESTMENT", 0, 1, 5, 0),
+                arrayOf<Any>("EQUITY", "Equity / Stocks", "EQUITY", 0, 1, 6, 0),
+                arrayOf<Any>("MUTUAL_FUNDS", "Mutual Funds", "MUTUAL_FUNDS", 0, 1, 7, 0),
+                arrayOf<Any>("UPI_DEBIT", "Linked UPI / Debit", "UPI_DEBIT", 0, 1, 8, 0),
+                arrayOf<Any>("LOAN", "Loan / Liability", "LOAN", 1, 1, 9, 0),
+                arrayOf<Any>("OTHER", "Other", "OTHER", 0, 1, 10, 0)
+            )
+            defaults.forEach { row ->
+                db.execSQL(
+                    "INSERT OR IGNORE INTO `account_types` (`uid`, `name`, `baseType`, `isLiability`, `isSystemDefault`, `sortOrder`, `isDeleted`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    row
+                )
+            }
+
+            db.execSQL("ALTER TABLE `accounts` ADD COLUMN `accountTypeUid` TEXT")
+            db.execSQL("UPDATE `accounts` SET `accountTypeUid` = `accountType` WHERE `accountTypeUid` IS NULL")
+        }
+    }
 }

@@ -77,6 +77,7 @@ fun CreditCardsScreen(
     val unbilledSpends by viewModel.unbilledCardSpends.collectAsState()
     val manualCardSummaries by viewModel.creditCards.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
+    val allAccountTypes by viewModel.accountTypes.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val categoriesMap by viewModel.categoriesMap.collectAsState()
 
@@ -974,11 +975,20 @@ fun CreditCardsScreen(
         OneUiAddEditAccountDialog(
             existingAccount = null,
             defaultAccountType = AccountType.CREDIT_CARD,
+            accountTypes = allAccountTypes,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { showAddCardDialog = false },
             onSave = { newCard ->
-                viewModel.saveAccount(newCard.copy(accountType = AccountType.CREDIT_CARD))
+                val normalized = if (newCard.accountType != AccountType.CREDIT_CARD) {
+                    newCard.copy(
+                        accountType = AccountType.CREDIT_CARD,
+                        accountTypeUid = AccountType.CREDIT_CARD.name
+                    )
+                } else {
+                    newCard
+                }
+                viewModel.saveAccount(normalized)
                 showAddCardDialog = false
             }
         )
@@ -987,6 +997,7 @@ fun CreditCardsScreen(
     cardToEdit?.let { card ->
         OneUiAddEditAccountDialog(
             existingAccount = card,
+            accountTypes = allAccountTypes,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { cardToEdit = null },

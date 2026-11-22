@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="add_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_expense"
+        android:shortcutShortLabel="@string/shortcut_add_expense_short"
+        android:shortcutLongLabel="@string/shortcut_add_expense_long">
+        <intent
+            android:action="com.moneymanager.app.action.QUICK_ADD_EXPENSE"
+            android:targetPackage="com.moneymanager.app"
+            android:targetClass="com.moneymanager.app.MainActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="add_income"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_income"
+        android:shortcutShortLabel="@string/shortcut_add_income_short"
+        android:shortcutLongLabel="@string/shortcut_add_income_long">
+        <intent
+            android:action="com.moneymanager.app.action.QUICK_ADD_INCOME"
+            android:targetPackage="com.moneymanager.app"
+            android:targetClass="com.moneymanager.app.MainActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="add_transfer"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_transfer"
+        android:shortcutShortLabel="@string/shortcut_add_transfer_short"
+        android:shortcutLongLabel="@string/shortcut_add_transfer_long">
+        <intent
+            android:action="com.moneymanager.app.action.QUICK_ADD_TRANSFER"
+            android:targetPackage="com.moneymanager.app"
+            android:targetClass="com.moneymanager.app.MainActivity" />
+    </shortcut>
+</shortcuts>

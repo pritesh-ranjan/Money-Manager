@@ -3,4 +3,10 @@
     <string name="add_income">Add Income</string>
     <string name="transfer">Transfer</string>
     <string name="add_expense">Add Expense</string>
+    <string name="shortcut_add_expense_short">Add Expense</string>
+    <string name="shortcut_add_expense_long">New Expense Transaction</string>
+    <string name="shortcut_add_income_short">Add Income</string>
+    <string name="shortcut_add_income_long">New Income Transaction</string>
+    <string name="shortcut_add_transfer_short">Transfer</string>
+    <string name="shortcut_add_transfer_long">New Transfer Transaction</string>
 </resources>

@@ -2,7 +2,11 @@ package com.moneymanager.app.data
 
 import com.moneymanager.app.data.local.dao.MoneyManagerDao
 import com.moneymanager.app.data.local.entity.AccountEntity
+import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
+import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
@@ -19,6 +23,7 @@ import kotlinx.coroutines.flow.map
 class FakeMoneyManagerDao : MoneyManagerDao {
 
     val currenciesFlow = MutableStateFlow<List<CurrencyEntity>>(emptyList())
+    val accountTypesFlow = MutableStateFlow<List<AccountTypeEntity>>(AccountTypeDefaults.defaultEntities())
     val accountsFlow = MutableStateFlow<List<AccountEntity>>(emptyList())
     val categoriesFlow = MutableStateFlow<List<CategoryEntity>>(emptyList())
     val tagsFlow = MutableStateFlow<List<TagEntity>>(emptyList())
@@ -60,6 +65,75 @@ class FakeMoneyManagerDao : MoneyManagerDao {
         val current = currenciesFlow.value.toMutableList()
         current.removeAll { it.uid == currency.uid }
         currenciesFlow.value = current
+    }
+
+    // --- Account Types ---
+    override fun getAllAccountTypes(): Flow<List<AccountTypeEntity>> {
+        return accountTypesFlow.map { types ->
+            types.filter { !it.isDeleted }
+                .sortedWith(compareBy({ it.sortOrder }, { it.name }))
+        }
+    }
+
+    override suspend fun getAllAccountTypesRaw(): List<AccountTypeEntity> = accountTypesFlow.value
+
+    override suspend fun getAccountTypeById(uid: String): AccountTypeEntity? {
+        return accountTypesFlow.value.firstOrNull { it.uid == uid }
+    }
+
+    override suspend fun insertAccountType(accountType: AccountTypeEntity) {
+        val current = accountTypesFlow.value.toMutableList()
+        current.removeAll { it.uid == accountType.uid }
+        current.add(accountType)
+        accountTypesFlow.value = current
+    }
+
+    override suspend fun insertAccountTypes(accountTypes: List<AccountTypeEntity>) {
+        val current = accountTypesFlow.value.toMutableList()
+        for (t in accountTypes) {
+            current.removeAll { it.uid == t.uid }
+            current.add(t)
+        }
+        accountTypesFlow.value = current
+    }
+
+    override suspend fun updateAccountType(accountType: AccountTypeEntity) {
+        insertAccountType(accountType)
+    }
+
+    override suspend fun softDeleteAccountType(uid: String) {
+        accountTypesFlow.value = accountTypesFlow.value.map { type ->
+            if (type.uid == uid) type.copy(isDeleted = true) else type
+        }
+    }
+
+    override suspend fun countAccountsUsingAccountType(typeUid: String): Int {
+        return accountsFlow.value.count { !it.isArchived && it.resolvedAccountTypeUid == typeUid }
+    }
+
+    override suspend fun updateAccountBaseTypeForTypeUid(typeUid: String, baseType: AccountType) {
+        accountsFlow.value = accountsFlow.value.map { acc ->
+            if (acc.accountTypeUid == typeUid) acc.copy(accountType = baseType) else acc
+        }
+    }
+
+    override suspend fun clearCreditCardFieldsForTypeUid(typeUid: String) {
+        accountsFlow.value = accountsFlow.value.map { acc ->
+            if (acc.accountTypeUid == typeUid) {
+                acc.copy(
+                    statementDay = null,
+                    paymentDueDay = null,
+                    creditLimit = null,
+                    settlementAccountUid = null
+                )
+            } else {
+                acc
+            }
+        }
+    }
+
+    override suspend fun clearAllAccountTypes() {
+        accountTypesFlow.value = emptyList()
     }
 
     // --- Accounts ---
