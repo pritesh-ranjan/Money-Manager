@@ -8,11 +8,14 @@ import com.moneymanager.app.data.local.entity.AccountTypeDefaults
 import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
 import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
+import com.moneymanager.app.data.local.entity.resolvedIsLiability
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
 import com.moneymanager.app.data.local.entity.CurrencyEntity
 import com.moneymanager.app.data.local.entity.InsightWithTransactions
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.requiredInstitutionKind
 import com.moneymanager.app.data.local.entity.RecurrenceDecision
 import com.moneymanager.app.data.local.entity.RecurrenceDecisionEntity
 import com.moneymanager.app.data.local.entity.TagEntity
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import com.moneymanager.app.domain.DomainValidator
+import com.moneymanager.app.domain.statement.core.StatementEntityMapper
 import java.io.File
 import java.time.LocalDate
 import java.util.UUID
@@ -90,6 +94,13 @@ class MoneyManagerRepository(
             dao.updateAccountBaseTypeForTypeUid(sanitized.uid, sanitized.baseType)
             if (sanitized.baseType != AccountType.CREDIT_CARD) {
                 dao.clearCreditCardFieldsForTypeUid(sanitized.uid)
+                dao.clearCardNetworkForTypeUid(sanitized.uid)
+            }
+            dao.clearMismatchedInstitutionsForTypeUid(sanitized.uid, sanitized.baseType.requiredInstitutionKind())
+            if (sanitized.isLiability) {
+                dao.getAllAccountsRaw()
+                    .filter { it.resolvedAccountTypeUid == sanitized.uid }
+                    .forEach { acc -> dao.clearSettlementAccountReferences(acc.uid) }
             }
         } else {
             val nextSortOrder = if (sanitized.sortOrder > 0) {
@@ -116,6 +127,39 @@ class MoneyManagerRepository(
         dao.softDeleteAccountType(accountType.uid)
     }
 
+    // --- Institutions (Banks & Platforms) ---
+    val allInstitutions: Flow<List<InstitutionEntity>> = dao.getAllInstitutions()
+
+    suspend fun saveInstitution(institution: InstitutionEntity) {
+        val existing = dao.getAllInstitutionsRaw()
+        val existingMatch = existing.firstOrNull { it.uid == institution.uid }
+        val sanitized = institution.copy(
+            name = institution.name.trim(),
+            kind = existingMatch?.kind ?: institution.kind,
+            isDeleted = false
+        )
+        DomainValidator.validateInstitution(sanitized, existing)
+
+        if (existingMatch != null) {
+            dao.updateInstitution(sanitized)
+        } else {
+            val nextSortOrder = if (sanitized.sortOrder > 0) {
+                sanitized.sortOrder
+            } else {
+                (existing.maxOfOrNull { it.sortOrder } ?: 0) + 1
+            }
+            dao.insertInstitution(sanitized.copy(sortOrder = nextSortOrder))
+        }
+    }
+
+    suspend fun deleteInstitution(institution: InstitutionEntity) {
+        val inUseCount = dao.countAccountsUsingInstitution(institution.uid)
+        require(inUseCount == 0) {
+            "Cannot delete '${institution.name}' because it is in use by $inUseCount active account(s)"
+        }
+        dao.softDeleteInstitution(institution.uid)
+    }
+
     // --- Accounts ---
     val accountsWithCurrency: Flow<List<AccountWithCurrency>> = dao.getAllAccountsWithCurrency()
 
@@ -123,17 +167,28 @@ class MoneyManagerRepository(
         val existing = dao.getAllAccountsRaw()
         val currency = dao.getCurrencyById(account.currencyUid)
         val accountTypesMap = dao.getAllAccountTypesRaw().associateBy { it.uid }
+        val institutionsMap = dao.getAllInstitutionsRaw().associateBy { it.uid }
         val resolvedTypeUid = account.accountTypeUid?.takeIf { it.isNotBlank() } ?: account.accountType.name
         val resolvedBaseType = accountTypesMap[resolvedTypeUid]?.baseType ?: account.accountType
+        val cleanedNumber = account.accountNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+            if (resolvedBaseType == AccountType.CREDIT_CARD) {
+                StatementEntityMapper.sanitizeCardMask(raw)
+            } else {
+                raw
+            }
+        }
         val normalizedAccount = account.copy(
             accountType = resolvedBaseType,
-            accountTypeUid = resolvedTypeUid
+            accountTypeUid = resolvedTypeUid,
+            accountNumber = cleanedNumber,
+            institutionUid = account.institutionUid?.takeIf { it.isNotBlank() }
         )
         DomainValidator.validateAccount(
             account = normalizedAccount,
             existingAccounts = existing,
             currencyExists = currency != null,
-            accountTypesMap = accountTypesMap
+            accountTypesMap = accountTypesMap,
+            institutionsMap = institutionsMap
         )
 
         val sanitized = if (normalizedAccount.accountType != AccountType.CREDIT_CARD) {
@@ -141,7 +196,8 @@ class MoneyManagerRepository(
                 statementDay = null,
                 paymentDueDay = null,
                 creditLimit = null,
-                settlementAccountUid = null
+                settlementAccountUid = null,
+                cardNetwork = null
             )
         } else normalizedAccount
 
@@ -150,6 +206,9 @@ class MoneyManagerRepository(
             dao.updateAccount(sanitized)
         } else {
             dao.insertAccount(sanitized)
+        }
+        if (sanitized.resolvedIsLiability(accountTypesMap)) {
+            dao.clearSettlementAccountReferences(sanitized.uid)
         }
     }
 
@@ -237,12 +296,14 @@ class MoneyManagerRepository(
         val sourceAccountWithCurr = dao.getAccountWithCurrencyById(preSanitized.accountUid)
         val destAccountWithCurr = preSanitized.toAccountUid?.let { dao.getAccountWithCurrencyById(it) }
         val category = preSanitized.categoryUid?.let { dao.getCategoryById(it) }
+        val existingTx = dao.getTransactionById(preSanitized.uid)?.transaction
 
         DomainValidator.validateTransaction(
             transaction = preSanitized,
             sourceAccount = sourceAccountWithCurr?.account,
             destAccount = destAccountWithCurr?.account,
-            category = category
+            category = category,
+            existingTransaction = existingTx
         )
 
         val finalTx = when (preSanitized.type) {
@@ -250,10 +311,12 @@ class MoneyManagerRepository(
                 val sourceCurr = sourceAccountWithCurr!!.currency
                 val destCurr = destAccountWithCurr!!.currency
                 val baseAmt = preSanitized.accountAmount * sourceCurr.rateToBase
-                val destAmt = preSanitized.toAccountAmount ?: if (sourceCurr.uid == destCurr.uid) {
-                    preSanitized.accountAmount
-                } else {
-                    baseAmt / destCurr.rateToBase
+                val destAmt = when {
+                    sourceCurr.uid == destCurr.uid -> preSanitized.toAccountAmount ?: preSanitized.accountAmount
+                    preSanitized.toAccountAmount == null -> baseAmt / destCurr.rateToBase
+                    Math.abs(preSanitized.toAccountAmount - preSanitized.accountAmount) < 0.0001 &&
+                        Math.abs(sourceCurr.rateToBase - destCurr.rateToBase) > 0.0001 -> baseAmt / destCurr.rateToBase
+                    else -> preSanitized.toAccountAmount
                 }
                 preSanitized.copy(
                     baseAmount = baseAmt,

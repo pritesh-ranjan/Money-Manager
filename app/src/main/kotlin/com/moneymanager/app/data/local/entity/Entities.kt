@@ -9,6 +9,27 @@ import androidx.room.Junction
 import androidx.room.PrimaryKey
 import androidx.room.Relation
 
+enum class InstitutionKind(val displayName: String, val pluralName: String) {
+    BANK("Bank", "Banks"),
+    PLATFORM("Platform", "Platforms")
+}
+
+enum class CardNetwork(val displayName: String) {
+    VISA("Visa"),
+    MASTERCARD("Mastercard"),
+    RUPAY("RuPay"),
+    AMEX("American Express"),
+    DINERS_CLUB("Diners Club"),
+    DISCOVER("Discover")
+}
+
+enum class InstitutionRequirement {
+    PLATFORM_REQUIRED,
+    BANK_AND_NETWORK_REQUIRED,
+    BANK_REQUIRED,
+    BANK_OPTIONAL
+}
+
 enum class AccountType(val displayName: String, val isLiability: Boolean) {
     CASH("Cash", false),
     SAVINGS("Bank / Savings", false),
@@ -21,6 +42,31 @@ enum class AccountType(val displayName: String, val isLiability: Boolean) {
     LOAN("Loan / Liability", true),
     OTHER("Other", false)
 }
+
+fun AccountType.institutionRequirement(): InstitutionRequirement = when (this) {
+    AccountType.EQUITY, AccountType.MUTUAL_FUNDS -> InstitutionRequirement.PLATFORM_REQUIRED
+    AccountType.CREDIT_CARD -> InstitutionRequirement.BANK_AND_NETWORK_REQUIRED
+    AccountType.CASH -> InstitutionRequirement.BANK_OPTIONAL
+    else -> InstitutionRequirement.BANK_REQUIRED
+}
+
+fun AccountType.requiredInstitutionKind(): InstitutionKind = when (this) {
+    AccountType.EQUITY, AccountType.MUTUAL_FUNDS -> InstitutionKind.PLATFORM
+    else -> InstitutionKind.BANK
+}
+
+@Entity(
+    tableName = "institutions",
+    indices = [Index(value = ["kind"]), Index(value = ["sortOrder"])]
+)
+data class InstitutionEntity(
+    @PrimaryKey
+    val uid: String,
+    val name: String,
+    val kind: InstitutionKind,
+    val sortOrder: Int = 0,
+    val isDeleted: Boolean = false
+)
 
 @Entity(
     tableName = "account_types",
@@ -113,7 +159,10 @@ data class AccountEntity(
     val includeInNetWorth: Boolean = true,
     val sortOrder: Int = 0,
     val isArchived: Boolean = false,
-    val accountTypeUid: String? = null
+    val accountTypeUid: String? = null,
+    val accountNumber: String? = null,
+    val institutionUid: String? = null,
+    val cardNetwork: CardNetwork? = null
 )
 
 val AccountEntity.resolvedAccountTypeUid: String
@@ -123,8 +172,17 @@ fun AccountEntity.resolvedTypeName(accountTypesMap: Map<String, AccountTypeEntit
     return accountTypesMap[resolvedAccountTypeUid]?.name ?: accountType.displayName
 }
 
+fun AccountEntity.resolvedBaseType(accountTypesMap: Map<String, AccountTypeEntity>): AccountType {
+    return accountTypesMap[resolvedAccountTypeUid]?.baseType ?: accountType
+}
+
 fun AccountEntity.resolvedIsLiability(accountTypesMap: Map<String, AccountTypeEntity>): Boolean {
     return accountTypesMap[resolvedAccountTypeUid]?.isLiability ?: accountType.isLiability
+}
+
+fun AccountEntity.resolvedInstitutionName(institutionsMap: Map<String, InstitutionEntity>): String? {
+    val uid = institutionUid?.takeIf { it.isNotBlank() } ?: return null
+    return institutionsMap[uid]?.name
 }
 
 @Entity(

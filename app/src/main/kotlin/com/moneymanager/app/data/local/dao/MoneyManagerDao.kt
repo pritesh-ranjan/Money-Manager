@@ -16,6 +16,8 @@ import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionTagCrossRef
@@ -86,11 +88,42 @@ interface MoneyManagerDao {
     @Query("SELECT COUNT(*) FROM accounts WHERE isArchived = 0 AND (accountTypeUid = :typeUid OR (accountTypeUid IS NULL AND accountType = :typeUid))")
     suspend fun countAccountsUsingAccountType(typeUid: String): Int
 
-    @Query("UPDATE accounts SET accountType = :baseType WHERE accountTypeUid = :typeUid")
+    @Query("UPDATE accounts SET accountType = :baseType, accountTypeUid = :typeUid WHERE accountTypeUid = :typeUid OR (accountTypeUid IS NULL AND accountType = :typeUid)")
     suspend fun updateAccountBaseTypeForTypeUid(typeUid: String, baseType: AccountType)
 
-    @Query("UPDATE accounts SET statementDay = NULL, paymentDueDay = NULL, creditLimit = NULL, settlementAccountUid = NULL WHERE accountTypeUid = :typeUid")
+    @Query("UPDATE accounts SET statementDay = NULL, paymentDueDay = NULL, creditLimit = NULL, settlementAccountUid = NULL WHERE accountTypeUid = :typeUid OR (accountTypeUid IS NULL AND accountType = :typeUid)")
     suspend fun clearCreditCardFieldsForTypeUid(typeUid: String)
+
+    // --- Institutions (Banks & Platforms) ---
+    @Query("SELECT * FROM institutions WHERE isDeleted = 0 ORDER BY sortOrder ASC, name ASC")
+    fun getAllInstitutions(): Flow<List<InstitutionEntity>>
+
+    @Query("SELECT * FROM institutions")
+    suspend fun getAllInstitutionsRaw(): List<InstitutionEntity>
+
+    @Query("SELECT * FROM institutions WHERE uid = :uid LIMIT 1")
+    suspend fun getInstitutionById(uid: String): InstitutionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInstitution(institution: InstitutionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInstitutions(institutions: List<InstitutionEntity>)
+
+    @Update
+    suspend fun updateInstitution(institution: InstitutionEntity)
+
+    @Query("UPDATE institutions SET isDeleted = 1 WHERE uid = :uid")
+    suspend fun softDeleteInstitution(uid: String)
+
+    @Query("SELECT COUNT(*) FROM accounts WHERE isArchived = 0 AND institutionUid = :institutionUid")
+    suspend fun countAccountsUsingInstitution(institutionUid: String): Int
+
+    @Query("UPDATE accounts SET cardNetwork = NULL WHERE accountTypeUid = :typeUid OR (accountTypeUid IS NULL AND accountType = :typeUid)")
+    suspend fun clearCardNetworkForTypeUid(typeUid: String)
+
+    @Query("UPDATE accounts SET institutionUid = NULL WHERE (accountTypeUid = :typeUid OR (accountTypeUid IS NULL AND accountType = :typeUid)) AND institutionUid IN (SELECT uid FROM institutions WHERE kind != :requiredKind)")
+    suspend fun clearMismatchedInstitutionsForTypeUid(typeUid: String, requiredKind: InstitutionKind)
 
 
     // --- Accounts ---
@@ -171,7 +204,7 @@ interface MoneyManagerDao {
     fun getAllTransactions(): Flow<List<TransactionWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM transactions WHERE isDeleted = 0 AND accountUid = :accountUid ORDER BY timestamp DESC")
+    @Query("SELECT * FROM transactions WHERE isDeleted = 0 AND (accountUid = :accountUid OR toAccountUid = :accountUid) ORDER BY timestamp DESC")
     fun getTransactionsForAccount(accountUid: String): Flow<List<TransactionWithDetails>>
 
     @Transaction
@@ -306,6 +339,9 @@ interface MoneyManagerDao {
     @Query("DELETE FROM account_types")
     suspend fun clearAllAccountTypes()
 
+    @Query("DELETE FROM institutions")
+    suspend fun clearAllInstitutions()
+
     @Transaction
     suspend fun replaceAllBackupData(
         currencies: List<CurrencyEntity>,
@@ -314,11 +350,13 @@ interface MoneyManagerDao {
         transactions: List<TransactionEntity>,
         tags: List<TagEntity> = emptyList(),
         tagCrossRefs: List<TransactionTagCrossRef> = emptyList(),
-        accountTypes: List<AccountTypeEntity> = AccountTypeDefaults.defaultEntities()
+        accountTypes: List<AccountTypeEntity> = AccountTypeDefaults.defaultEntities(),
+        institutions: List<InstitutionEntity> = emptyList()
     ) {
         clearAllTransactionTags()
         clearAllTransactions()
         clearAllAccounts()
+        clearAllInstitutions()
         clearAllAccountTypes()
         clearAllCategories()
         clearAllTags()
@@ -326,6 +364,7 @@ interface MoneyManagerDao {
 
         val typesToInsert = accountTypes.ifEmpty { AccountTypeDefaults.defaultEntities() }
         insertAccountTypes(typesToInsert)
+        if (institutions.isNotEmpty()) insertInstitutions(institutions)
         if (currencies.isNotEmpty()) insertCurrencies(currencies)
         if (categories.isNotEmpty()) insertCategories(categories)
         if (accounts.isNotEmpty()) insertAccounts(accounts)

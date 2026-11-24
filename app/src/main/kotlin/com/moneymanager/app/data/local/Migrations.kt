@@ -197,4 +197,26 @@ object Migrations {
             db.execSQL("UPDATE `accounts` SET `accountTypeUid` = `accountType` WHERE `accountTypeUid` IS NULL")
         }
     }
+
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS `institutions` (
+                    `uid` TEXT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `kind` TEXT NOT NULL,
+                    `sortOrder` INTEGER NOT NULL,
+                    `isDeleted` INTEGER NOT NULL,
+                    PRIMARY KEY(`uid`)
+                )
+            """.trimIndent())
+
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutions_kind` ON `institutions` (`kind`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutions_sortOrder` ON `institutions` (`sortOrder`)")
+
+            db.execSQL("ALTER TABLE `accounts` ADD COLUMN `accountNumber` TEXT")
+            db.execSQL("ALTER TABLE `accounts` ADD COLUMN `institutionUid` TEXT")
+            db.execSQL("ALTER TABLE `accounts` ADD COLUMN `cardNetwork` TEXT")
+        }
+    }
 }

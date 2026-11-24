@@ -38,6 +38,8 @@ import com.moneymanager.app.data.local.entity.GmailSyncStatus
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.AccountTypeDefaults
 import com.moneymanager.app.data.local.entity.AccountTypeEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
 import com.moneymanager.app.domain.cards.CreditCardMappingStorage
@@ -50,6 +52,7 @@ import com.moneymanager.app.domain.statement.core.StatementParserRegistry
 import com.moneymanager.app.domain.statement.core.StatementSecurityException
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.util.Locale
@@ -325,6 +328,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             AccountTypeDefaults.defaultEntities().associateBy { it.uid }
         )
 
+    val allInstitutions: StateFlow<List<InstitutionEntity>> = repository.allInstitutions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val banks: StateFlow<List<InstitutionEntity>> = allInstitutions
+        .map { list -> list.filter { it.kind == InstitutionKind.BANK } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val platforms: StateFlow<List<InstitutionEntity>> = allInstitutions
+        .map { list -> list.filter { it.kind == InstitutionKind.PLATFORM } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val institutionsMap: StateFlow<Map<String, InstitutionEntity>> = allInstitutions
+        .map { list -> list.associateBy { it.uid } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val allCurrencies: StateFlow<List<CurrencyEntity>> = repository.allCurrencies
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -356,9 +374,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val statementSummaries: StateFlow<List<CardStatementSummaryRecord>> = statementRepository.getStatementSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val unbilledCardSpends: StateFlow<List<TransactionWithDetails>> = allTransactionsUnfiltered.map { list ->
-        list.filter { it.account.accountType == AccountType.CREDIT_CARD && it.transaction.type == TransactionType.EXPENSE }
-            .sortedByDescending { it.transaction.timestamp }
+    val unbilledCardSpends: StateFlow<List<TransactionWithDetails>> = combine(
+        allTransactionsUnfiltered,
+        creditCards
+    ) { list, summaries ->
+        val cutoffByCardUid = summaries.associate { summary ->
+            summary.accountUid to summary.lastStatementDate
+                .atTime(LocalTime.MAX)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }
+        list.filter { item ->
+            item.account.accountType == AccountType.CREDIT_CARD &&
+                item.transaction.type == TransactionType.EXPENSE &&
+                item.transaction.timestamp > (cutoffByCardUid[item.account.uid] ?: 0L)
+        }.sortedByDescending { it.transaction.timestamp }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val monthlyMoneyStory: StateFlow<MonthlyMoneyStory?> = combine(
@@ -436,28 +467,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val y = today.minusDays(1)
                 Pair(
                     y.atStartOfDay(zone).toInstant().toEpochMilli(),
-                    y.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                    y.atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 )
             }
             DateFilterPreset.PAST_7_DAYS -> {
                 val start = today.minusDays(6)
                 Pair(
                     start.atStartOfDay(zone).toInstant().toEpochMilli(),
-                    today.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                    today.atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 )
             }
             DateFilterPreset.PAST_30_DAYS -> {
                 val start = today.minusDays(29)
                 Pair(
                     start.atStartOfDay(zone).toInstant().toEpochMilli(),
-                    today.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                    today.atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 )
             }
             DateFilterPreset.THIS_MONTH -> {
                 val currentYm = YearMonth.now()
                 Pair(
                     currentYm.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli(),
-                    currentYm.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                    currentYm.atEndOfMonth().atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 )
             }
             DateFilterPreset.CUSTOM -> {
@@ -465,13 +496,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val end = filter.customEndDate ?: today
                 Pair(
                     start.atStartOfDay(zone).toInstant().toEpochMilli(),
-                    end.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                    end.atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 )
             }
             null -> {
                 Pair(
                     ym.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli(),
-                    ym.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                    ym.atEndOfMonth().atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 )
             }
         }
@@ -667,7 +698,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     currencyUid = currencyUid,
                     accountUid = accountUid,
                     toAccountUid = toAccountUid,
-                    toAccountAmount = if (type == TransactionType.TRANSFER) amount else null,
+                    toAccountAmount = null,
                     categoryUid = categoryUid,
                     note = note,
                     description = description,
@@ -752,14 +783,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- Institutions (Banks & Platforms) Management ---
+    fun saveInstitution(institution: InstitutionEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.saveInstitution(institution)
+                _uiMessage.value = UiMessage.Success("${institution.kind.displayName} '${institution.name.trim()}' saved")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to save ${institution.kind.displayName.lowercase()}: ${e.localizedMessage ?: e.message}")
+            }
+        }
+    }
+
+    fun deleteInstitution(institution: InstitutionEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.deleteInstitution(institution)
+                _uiMessage.value = UiMessage.Success("${institution.kind.displayName} '${institution.name}' deleted")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to delete ${institution.kind.displayName.lowercase()}: ${e.localizedMessage ?: e.message}")
+            }
+        }
+    }
+
     // --- Account Management ---
-    fun saveAccount(account: AccountEntity) {
+    fun saveAccount(account: AccountEntity, onResult: ((Result<Unit>) -> Unit)? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 repository.saveAccount(account)
                 _uiMessage.value = UiMessage.Success("Account '${account.name}' saved")
+                if (onResult != null) {
+                    withContext(Dispatchers.Main) {
+                        onResult(Result.success(Unit))
+                    }
+                }
             } catch (e: Exception) {
                 _uiMessage.value = UiMessage.Error("Failed to save account: ${e.localizedMessage}")
+                if (onResult != null) {
+                    withContext(Dispatchers.Main) {
+                        onResult(Result.failure(e))
+                    }
+                }
             }
         }
     }
@@ -1070,92 +1134,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun payStatementBill(
-        summary: CardStatementSummaryRecord,
-        fromAccountUid: String,
-        amount: Double
-    ) {
-        viewModelScope.launch {
-            val context = getApplication<Application>()
-            val mappedAccountUid = CreditCardMappingStorage.getMappedAccountUid(
-                context,
-                summary.bankId,
-                summary.accountOrCardNumberMasked
-            )
-            val toAccount = if (!mappedAccountUid.isNullOrBlank()) {
-                accounts.value.firstOrNull { it.account.uid == mappedAccountUid }?.account
-            } else {
-                accounts.value.firstOrNull {
-                    it.account.accountType == AccountType.CREDIT_CARD &&
-                        (it.account.name.contains(summary.accountOrCardNumberMasked.takeLast(4)) ||
-                            summary.bankName.contains(it.account.name, ignoreCase = true) ||
-                            it.account.name.contains(summary.bankName, ignoreCase = true))
-                }?.account
-            }
-
-            if (toAccount != null) {
-                val paymentTx = TransactionEntity(
-                    uid = UUID.randomUUID().toString(),
-                    type = TransactionType.TRANSFER,
-                    accountAmount = amount,
-                    baseAmount = amount,
-                    currencyUid = toAccount.currencyUid,
-                    accountUid = fromAccountUid,
-                    toAccountUid = toAccount.uid,
-                    toAccountAmount = amount,
-                    note = "Credit Card Bill Payment",
-                    description = "${summary.bankName} (${summary.accountOrCardNumberMasked.takeLast(4)}) Statement ${summary.statementYearMonth}",
-                    timestamp = System.currentTimeMillis()
-                )
-                repository.saveTransaction(paymentTx)
-            } else {
-                val fromAccount = accounts.value.firstOrNull { it.account.uid == fromAccountUid }?.account
-                if (fromAccount != null) {
-                    val paymentTx = TransactionEntity(
-                        uid = UUID.randomUUID().toString(),
-                        type = TransactionType.EXPENSE,
-                        accountAmount = amount,
-                        baseAmount = amount,
-                        currencyUid = fromAccount.currencyUid,
-                        accountUid = fromAccountUid,
-                        note = "Bill Payment: ${summary.bankName}",
-                        description = "Statement ${summary.statementYearMonth} for ${summary.accountOrCardNumberMasked}",
-                        timestamp = System.currentTimeMillis()
-                    )
-                    repository.saveTransaction(paymentTx)
-                }
-            }
-            statementRepository.setStatementPaidStatus(summary.statementId, isPaid = true)
-            _uiMessage.value = UiMessage.Success("Paid bill of ₹${String.format(Locale.getDefault(), "%.2f", amount)} for ${summary.bankName}")
-        }
-    }
-
-    suspend fun getReconciliationReport(summary: CardStatementSummaryRecord): StatementReconciliationReport {
+    fun resolveStatementCardAccount(summary: CardStatementSummaryRecord): AccountEntity? {
         val context = getApplication<Application>()
-        val stmtTxs = statementRepository.getTransactionsByStatementIdRaw(summary.statementId)
         val mappedAccountUid = CreditCardMappingStorage.getMappedAccountUid(
             context,
             summary.bankId,
             summary.accountOrCardNumberMasked
         )
+        return CreditCardMappingStorage.resolveCardAccount(
+            mappedAccountUid = mappedAccountUid,
+            statementBankName = summary.bankName,
+            cardMasked = summary.accountOrCardNumberMasked,
+            accounts = accounts.value.map { it.account },
+            institutionsMap = institutionsMap.value
+        )
+    }
 
-        val manualCardTxs = if (!mappedAccountUid.isNullOrBlank()) {
-            allTransactionsUnfiltered.value.filter { it.account.uid == mappedAccountUid }
-        } else {
-            val last4 = summary.accountOrCardNumberMasked.replace("[^0-9]".toRegex(), "").takeLast(4)
-            val bankLower = summary.bankName.lowercase()
-            allTransactionsUnfiltered.value.filter {
-                it.account.accountType == AccountType.CREDIT_CARD && (
-                    (last4.isNotEmpty() && it.account.name.contains(last4)) ||
-                    summary.bankName.contains(it.account.name, ignoreCase = true) ||
-                    it.account.name.contains(summary.bankName, ignoreCase = true) ||
-                    (bankLower.contains("hdfc") && it.account.name.contains("hdfc", ignoreCase = true)) ||
-                    (bankLower.contains("icici") && it.account.name.contains("icici", ignoreCase = true)) ||
-                    (bankLower.contains("axis") && it.account.name.contains("axis", ignoreCase = true)) ||
-                    (bankLower.contains("baroda") && it.account.name.contains("baroda", ignoreCase = true)) ||
-                    (bankLower.contains("federal") && it.account.name.contains("federal", ignoreCase = true))
+    fun payStatementBill(
+        summary: CardStatementSummaryRecord,
+        fromAccountUid: String,
+        amount: Double
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val toAccount = resolveStatementCardAccount(summary)
+                if (toAccount == null) {
+                    _uiMessage.value = UiMessage.Error("Please link or map this statement to a Credit Card account before paying the bill")
+                    return@launch
+                }
+
+                val fromAccount = accounts.value.firstOrNull { it.account.uid == fromAccountUid }
+                val currUid = fromAccount?.currency?.uid ?: toAccount.currencyUid
+                val rate = fromAccount?.currency?.rateToBase ?: 1.0
+
+                repository.payCreditCardBill(
+                    fromAccountUid = fromAccountUid,
+                    creditCardUid = toAccount.uid,
+                    amount = amount,
+                    currencyUid = currUid,
+                    rateToBase = rate,
+                    note = "Credit Card Bill Payment"
                 )
+                statementRepository.setStatementPaidStatus(summary.statementId, isPaid = true)
+                runAnalysisNow()
+                _uiMessage.value = UiMessage.Success("Paid bill of ₹${String.format(Locale.getDefault(), "%.2f", amount)} for ${summary.bankName}")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Payment failed: ${e.localizedMessage ?: e.message}")
             }
+        }
+    }
+
+    suspend fun getReconciliationReport(summary: CardStatementSummaryRecord): StatementReconciliationReport {
+        val stmtTxs = statementRepository.getTransactionsByStatementIdRaw(summary.statementId)
+        val resolvedAccount = resolveStatementCardAccount(summary)
+        val targetCardUid = resolvedAccount?.uid
+        val manualCardTxs = if (targetCardUid != null) {
+            allTransactionsUnfiltered.value.filter {
+                it.account.uid == targetCardUid || it.toAccount?.uid == targetCardUid
+            }
+        } else {
+            emptyList()
         }
 
         val firstTx = stmtTxs.firstOrNull()
@@ -1168,7 +1206,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             statementTransactions = stmtTxs,
             manualTransactions = manualCardTxs,
             periodStartEpochDay = periodStart,
-            periodEndEpochDay = periodEnd
+            periodEndEpochDay = periodEnd,
+            cardAccountUid = targetCardUid
         )
     }
 
@@ -1177,26 +1216,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accountUid: String,
         categoryUid: String? = null
     ) {
-        viewModelScope.launch {
-            val acc = accounts.value.firstOrNull { it.account.uid == accountUid }?.account
-            val currencyUid = acc?.currencyUid ?: "curr_inr"
-            val tx = TransactionEntity(
-                uid = UUID.randomUUID().toString(),
-                type = if (stmtTx.isCredit) TransactionType.INCOME else TransactionType.EXPENSE,
-                accountAmount = stmtTx.amount,
-                baseAmount = stmtTx.amount,
-                currencyUid = currencyUid,
-                accountUid = accountUid,
-                categoryUid = categoryUid,
-                note = stmtTx.cleanNarration,
-                description = "Ref: ${stmtTx.referenceNumber ?: ""} (From Statement)",
-                timestamp = LocalDate.ofEpochDay(stmtTx.transactionDateEpochDay)
-                    .atStartOfDay(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli()
-            )
-            repository.saveTransaction(tx)
-            _uiMessage.value = UiMessage.Success("Added to ledger: ${stmtTx.cleanNarration}")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val accWithCurr = accounts.value.firstOrNull { it.account.uid == accountUid }
+                val mainCurrencyUid = allCurrencies.value.firstOrNull { it.isMainCurrency }?.uid ?: "CURRENCY_INR"
+                val currencyUid = accWithCurr?.account?.currencyUid ?: mainCurrencyUid
+                val rate = accWithCurr?.currency?.rateToBase ?: 1.0
+                val tx = TransactionEntity(
+                    uid = UUID.randomUUID().toString(),
+                    type = if (stmtTx.isCredit) TransactionType.INCOME else TransactionType.EXPENSE,
+                    accountAmount = stmtTx.amount,
+                    baseAmount = stmtTx.amount * rate,
+                    exchangeRate = rate,
+                    currencyUid = currencyUid,
+                    accountUid = accountUid,
+                    categoryUid = categoryUid,
+                    note = stmtTx.cleanNarration,
+                    description = "Ref: ${stmtTx.referenceNumber ?: ""} (From Statement)",
+                    timestamp = LocalDate.ofEpochDay(stmtTx.transactionDateEpochDay)
+                        .atStartOfDay(ZoneId.systemDefault())
+                        .toInstant()
+                        .toEpochMilli()
+                )
+                repository.saveTransaction(tx)
+                runAnalysisNow()
+                _uiMessage.value = UiMessage.Success("Added to ledger: ${stmtTx.cleanNarration}")
+            } catch (e: Exception) {
+                _uiMessage.value = UiMessage.Error("Failed to add transaction: ${e.localizedMessage ?: e.message}")
+            }
         }
     }
 

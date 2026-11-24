@@ -2,6 +2,8 @@ package com.moneymanager.app.ui.screens
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -35,6 +37,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -75,15 +78,29 @@ fun AddEditTransactionSheet(
     viewModel: MainViewModel,
     existingTx: TransactionWithDetails? = null,
     initialType: TransactionType = TransactionType.EXPENSE,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onNavigateToAccountTypes: () -> Unit = {},
+    onNavigateToInstitutions: (InstitutionKind) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
+    var focusManager = LocalFocusManager.current
+    var keyboardController = LocalSoftwareKeyboardController.current
+    var dialogView = LocalView.current
+
+    fun dismissKeyboardAndFocus() {
+        focusManager.clearFocus(force = true)
+        dialogView.clearFocus()
+        keyboardController?.hide()
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(dialogView.windowToken, 0)
+    }
 
     val allAccounts by viewModel.accounts.collectAsState()
     val allAccountTypes by viewModel.accountTypes.collectAsState()
     val accountTypesMap by viewModel.accountTypesMap.collectAsState()
+    val banks by viewModel.banks.collectAsState()
+    val platforms by viewModel.platforms.collectAsState()
+    val institutionsMap by viewModel.institutionsMap.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val expenseCategories by viewModel.expenseCategories.collectAsState()
     val incomeCategories by viewModel.incomeCategories.collectAsState()
@@ -95,27 +112,27 @@ fun AddEditTransactionSheet(
         mutableStateOf(existingTx?.transaction?.type ?: initialType)
     }
 
-    var isAdjustmentNegative by remember {
+    var isAdjustmentNegative by remember(existingTx?.transaction?.uid) {
         mutableStateOf(
             existingTx?.let { it.transaction.type == TransactionType.ADJUSTMENT && it.transaction.accountAmount < 0 } ?: false
         )
     }
 
-    var amountStr by remember {
+    var amountStr by remember(existingTx?.transaction?.uid) {
         mutableStateOf(
             existingTx?.let { String.format(Locale.US, "%.2f", abs(it.transaction.accountAmount)) } ?: ""
         )
     }
 
-    var selectedAccountUid by remember {
+    var selectedAccountUid by remember(existingTx?.transaction?.uid) {
         mutableStateOf(existingTx?.account?.uid ?: "")
     }
-    var selectedToAccountUid by remember {
+    var selectedToAccountUid by remember(existingTx?.transaction?.uid) {
         mutableStateOf(existingTx?.toAccount?.uid ?: "")
     }
 
-    var selectedCategoryUid by remember { mutableStateOf(existingTx?.category?.uid) }
-    var selectedCategoryName by remember {
+    var selectedCategoryUid by remember(existingTx?.transaction?.uid) { mutableStateOf(existingTx?.category?.uid) }
+    var selectedCategoryName by remember(existingTx?.transaction?.uid) {
         mutableStateOf(
             existingTx?.category?.let { cat ->
                 val parent = if (cat.parentUid != null) categoriesMap[cat.parentUid] else null
@@ -123,13 +140,13 @@ fun AddEditTransactionSheet(
             } ?: ""
         )
     }
-    var selectedCategoryIcon by remember { mutableStateOf(existingTx?.category?.icon ?: "") }
+    var selectedCategoryIcon by remember(existingTx?.transaction?.uid) { mutableStateOf(existingTx?.category?.icon ?: "") }
 
-    var note by remember { mutableStateOf(existingTx?.transaction?.note ?: "") }
-    var description by remember { mutableStateOf(existingTx?.transaction?.description ?: "") }
-    var timestamp by remember { mutableStateOf(existingTx?.transaction?.timestamp ?: System.currentTimeMillis()) }
+    var note by remember(existingTx?.transaction?.uid) { mutableStateOf(existingTx?.transaction?.note ?: "") }
+    var description by remember(existingTx?.transaction?.uid) { mutableStateOf(existingTx?.transaction?.description ?: "") }
+    var timestamp by remember(existingTx?.transaction?.uid) { mutableStateOf(existingTx?.transaction?.timestamp ?: System.currentTimeMillis()) }
 
-    var selectedTagUids by remember {
+    var selectedTagUids by remember(existingTx?.transaction?.uid) {
         mutableStateOf(existingTx?.tags?.map { it.uid }?.toSet() ?: emptySet())
     }
     var showAddTagDialog by remember { mutableStateOf(false) }
@@ -145,14 +162,14 @@ fun AddEditTransactionSheet(
     var addAccountDefaultType by remember { mutableStateOf(AccountType.SAVINGS) }
     var lastCreatedAccount by remember { mutableStateOf<AccountEntity?>(null) }
 
-    var activeField by remember {
+    var activeField by remember(existingTx?.transaction?.uid) {
         mutableStateOf(if (existingTx == null) ActiveTransactionField.AMOUNT else ActiveTransactionField.NONE)
     }
 
     val amountFocusRequester = remember { FocusRequester() }
     val noteFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(existingTx?.transaction?.uid) {
         if (existingTx == null) {
             activeField = ActiveTransactionField.AMOUNT
             try {
@@ -214,23 +231,37 @@ fun AddEditTransactionSheet(
 
     fun executeSave(isContinue: Boolean): Boolean {
         val amt = amountStr.toDoubleOrNull()
-        if (amt == null || amt <= 0.0) {
+        if (amt == null || !amt.isFinite() || amt <= 0.0) {
             validationError = "Please enter an amount greater than 0"
             activeField = ActiveTransactionField.AMOUNT
             amountFocusRequester.requestFocus()
             return false
         }
-        if (selectedAccountUid.isBlank()) {
-            validationError = "Please select an account"
-            focusManager.clearFocus()
+        val validAccountUids = buildSet {
+            allAccounts.filter { !it.account.isArchived }.forEach { add(it.account.uid) }
+            lastCreatedAccount?.takeIf { !it.isArchived }?.let { add(it.uid) }
+        }
+        if (selectedAccountUid.isBlank() || selectedAccountUid !in validAccountUids) {
+            validationError = if (selectedAccountUid.isBlank()) {
+                "Please select an active account"
+            } else {
+                "Selected account is archived. Please choose an active account."
+            }
+            focusManager.clearFocus(force = true)
             keyboardController?.hide()
             activeField = ActiveTransactionField.ACCOUNT
             return false
         }
         if (selectedType == TransactionType.TRANSFER) {
-            if (selectedToAccountUid.isBlank() || selectedToAccountUid == selectedAccountUid) {
-                validationError = "Please select a different destination account"
-                focusManager.clearFocus()
+            val destError = when {
+                selectedToAccountUid.isBlank() -> "Please select a destination account"
+                selectedToAccountUid == selectedAccountUid -> "Source and destination accounts cannot be the same"
+                selectedToAccountUid !in validAccountUids -> "Selected destination account is archived. Please choose an active account."
+                else -> null
+            }
+            if (destError != null) {
+                validationError = destError
+                focusManager.clearFocus(force = true)
                 keyboardController?.hide()
                 activeField = ActiveTransactionField.TO_ACCOUNT
                 return false
@@ -290,6 +321,19 @@ fun AddEditTransactionSheet(
             decorFitsSystemWindows = false
         )
     ) {
+        focusManager = LocalFocusManager.current
+        keyboardController = LocalSoftwareKeyboardController.current
+        dialogView = LocalView.current
+
+        LaunchedEffect(activeField) {
+            if (activeField == ActiveTransactionField.CATEGORY ||
+                activeField == ActiveTransactionField.ACCOUNT ||
+                activeField == ActiveTransactionField.TO_ACCOUNT
+            ) {
+                dismissKeyboardAndFocus()
+            }
+        }
+
         BackHandler {
             if (activeField == ActiveTransactionField.CATEGORY && categoryDrillDownParent != null) {
                 categoryDrillDownParent = null
@@ -987,12 +1031,18 @@ fun AddEditTransactionSheet(
                                 }
 
                                 ActiveTransactionField.ACCOUNT -> {
+                                    val sourceAccounts = if (selectedType == TransactionType.TRANSFER && selectedToAccountUid.isNotBlank()) {
+                                        allAccounts.filter { it.account.uid != selectedToAccountUid }
+                                    } else {
+                                        allAccounts
+                                    }
                                     OneUiAccountSelectionSheet(
                                         title = if (selectedType == TransactionType.TRANSFER) "From account" else "Select account",
-                                        accounts = allAccounts,
+                                        accounts = sourceAccounts,
                                         selectedUid = selectedAccountUid,
                                         allTransactions = allTransactions,
                                         accountTypesMap = accountTypesMap,
+                                        institutionsMap = institutionsMap,
                                         typeColor = typeColor,
                                         onClose = { activeField = ActiveTransactionField.NONE },
                                         onSelect = { uid ->
@@ -1022,6 +1072,7 @@ fun AddEditTransactionSheet(
                                         selectedUid = selectedToAccountUid,
                                         allTransactions = allTransactions,
                                         accountTypesMap = accountTypesMap,
+                                        institutionsMap = institutionsMap,
                                         typeColor = typeColor,
                                         onClose = { activeField = ActiveTransactionField.NONE },
                                         onSelect = { uid ->
@@ -1086,7 +1137,10 @@ fun AddEditTransactionSheet(
         OneUiAddEditAccountDialog(
             existingAccount = null,
             defaultAccountType = addAccountDefaultType,
+            skipTypeSelection = false,
             accountTypes = allAccountTypes,
+            banks = banks,
+            platforms = platforms,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { showAddAccountDialog = false },
@@ -1110,6 +1164,20 @@ fun AddEditTransactionSheet(
                     }
                 }
                 showAddAccountDialog = false
+            },
+            onSaveAccountType = { newType ->
+                viewModel.saveAccountType(newType)
+            },
+            onSaveInstitution = { newInst ->
+                viewModel.saveInstitution(newInst)
+            },
+            onNavigateToAccountTypes = {
+                showAddAccountDialog = false
+                onNavigateToAccountTypes()
+            },
+            onNavigateToInstitutions = { kind ->
+                showAddAccountDialog = false
+                onNavigateToInstitutions(kind)
             }
         )
     }
@@ -1250,30 +1318,6 @@ private fun OneUiAccountTypeIcon(
         tint = tint,
         modifier = modifier
     )
-}
-
-private fun getAccountDisplayInfo(account: AccountEntity): Pair<String, String> {
-    val fourDigitsRegex = Regex("^(.*?)[\\s\\-–—\\(]*[•\\*xX]*(\\d{4})\\)?$")
-    val match = fourDigitsRegex.find(account.name.trim())
-    return if (match != null && match.groupValues[1].isNotBlank()) {
-        val cleanName = match.groupValues[1].trim()
-        val digits = match.groupValues[2]
-        Pair(cleanName, "•••• $digits")
-    } else {
-        val subtitle = when (account.accountType) {
-            AccountType.CREDIT_CARD -> "Credit card"
-            AccountType.CASH -> "Cash"
-            AccountType.SAVINGS -> "Bank / Savings"
-            AccountType.UPI_DEBIT -> "UPI / Debit"
-            AccountType.WALLET -> "Wallet"
-            AccountType.INVESTMENT -> "Investment"
-            AccountType.MUTUAL_FUNDS -> "Mutual funds"
-            AccountType.EQUITY -> "Equity"
-            AccountType.LOAN -> "Loan"
-            AccountType.OTHER -> "Other"
-        }
-        Pair(account.name, subtitle)
-    }
 }
 
 private fun getCategorySubtitle(parentWithSubs: CategoryWithSubcategories): String {
@@ -1709,11 +1753,15 @@ private fun OneUiCategorySelectionSheet(
                                 horizontalArrangement = Arrangement.SpaceAround
                             ) {
                                 recentCategories.forEach { cat ->
+                                    val parentName = cat.parentUid?.let { pUid ->
+                                        categories.firstOrNull { it.category.uid == pUid }?.category?.name
+                                    }
+                                    val selectedLabel = if (parentName != null) "$parentName / ${cat.name}" else cat.name
                                     Column(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(12.dp))
                                             .clickable {
-                                                onSelect(cat.uid, cat.name, cat.icon)
+                                                onSelect(cat.uid, selectedLabel, cat.icon)
                                             }
                                             .padding(horizontal = 14.dp, vertical = 8.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally

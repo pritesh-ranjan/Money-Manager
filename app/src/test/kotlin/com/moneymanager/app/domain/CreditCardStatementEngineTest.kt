@@ -317,8 +317,104 @@ class CreditCardStatementEngineTest {
             zoneId = zoneId
         )
 
-        assertEquals(0.0, summary.remainingStatementDue, 0.001)
+        assertEquals(7000.0, summary.statementBilledAmount, 0.001)
+        assertEquals(1000.0, summary.remainingStatementDue, 0.001)
         assertEquals(2000.0, summary.totalOutstanding, 0.001)
+    }
+
+    @Test
+    fun testOpeningBalanceAndPriorCycleCarryOverAndOutgoingTransferAreIncludedInStatementDue() {
+        val card = AccountEntity(
+            uid = "card_carryover",
+            name = "Carryover Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = "INR",
+            openingBalance = 5000.0,
+            statementDay = 15,
+            paymentDueDay = 5,
+            creditLimit = 50000.0
+        )
+
+        val currentDate = LocalDate.of(2026, 10, 20)
+        val priorCycleExpenseTime = LocalDate.of(2026, 8, 25).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+        val outgoingTransferTime = LocalDate.of(2026, 10, 10).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+        val paymentTime = LocalDate.of(2026, 10, 18).atTime(LocalTime.NOON).atZone(zoneId).toInstant().toEpochMilli()
+
+        val summaryBeforePay = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "tx_prior",
+                    type = TransactionType.EXPENSE,
+                    accountAmount = 1500.0,
+                    baseAmount = 1500.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    timestamp = priorCycleExpenseTime
+                ),
+                TransactionEntity(
+                    uid = "tx_out_trf",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 500.0,
+                    baseAmount = 500.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    toAccountUid = "wallet",
+                    toAccountAmount = 500.0,
+                    timestamp = outgoingTransferTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+
+        assertEquals(7000.0, summaryBeforePay.statementBilledAmount, 0.001)
+        assertEquals(7000.0, summaryBeforePay.remainingStatementDue, 0.001)
+        assertEquals(7000.0, summaryBeforePay.totalOutstanding, 0.001)
+
+        val summaryAfterPartialPay = CreditCardStatementEngine.calculateStatement(
+            card = card,
+            transactions = listOf(
+                TransactionEntity(
+                    uid = "tx_prior",
+                    type = TransactionType.EXPENSE,
+                    accountAmount = 1500.0,
+                    baseAmount = 1500.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    timestamp = priorCycleExpenseTime
+                ),
+                TransactionEntity(
+                    uid = "tx_out_trf",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 500.0,
+                    baseAmount = 500.0,
+                    currencyUid = "INR",
+                    accountUid = card.uid,
+                    toAccountUid = "wallet",
+                    toAccountAmount = 500.0,
+                    timestamp = outgoingTransferTime
+                ),
+                TransactionEntity(
+                    uid = "tx_pay",
+                    type = TransactionType.TRANSFER,
+                    accountAmount = 3000.0,
+                    baseAmount = 3000.0,
+                    currencyUid = "INR",
+                    accountUid = "bank",
+                    toAccountUid = card.uid,
+                    toAccountAmount = 3000.0,
+                    timestamp = paymentTime
+                )
+            ),
+            currentDate = currentDate,
+            zoneId = zoneId
+        )
+
+        assertEquals(7000.0, summaryAfterPartialPay.statementBilledAmount, 0.001)
+        assertEquals(3000.0, summaryAfterPartialPay.paymentsSinceStatement, 0.001)
+        assertEquals(4000.0, summaryAfterPartialPay.remainingStatementDue, 0.001)
+        assertEquals(4000.0, summaryAfterPartialPay.totalOutstanding, 0.001)
     }
 
     @Test

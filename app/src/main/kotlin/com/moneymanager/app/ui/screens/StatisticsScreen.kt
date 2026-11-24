@@ -48,6 +48,7 @@ import com.moneymanager.app.ui.theme.*
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -131,13 +132,13 @@ fun StatisticsScreen(
             StatsPeriodType.MONTHLY -> {
                 val targetYm = selectedYm.plusMonths(periodOffset.toLong())
                 val start = targetYm.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                val end = targetYm.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                val end = targetYm.atEndOfMonth().atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 Triple(targetYm.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())), start, end)
             }
             StatsPeriodType.ANNUALLY -> {
                 val baseYear = selectedYm.year + periodOffset
                 val start = LocalDate.of(baseYear, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
-                val end = LocalDate.of(baseYear, 12, 31).atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                val end = LocalDate.of(baseYear, 12, 31).atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 Triple("Year $baseYear", start, end)
             }
             StatsPeriodType.WEEKLY -> {
@@ -145,7 +146,7 @@ fun StatisticsScreen(
                 val startOfWeek = today.minusDays((today.dayOfWeek.value % 7).toLong())
                 val endOfWeek = startOfWeek.plusDays(6)
                 val start = startOfWeek.atStartOfDay(zone).toInstant().toEpochMilli()
-                val end = endOfWeek.atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                val end = endOfWeek.atTime(23, 59, 59, 999_000_000).atZone(zone).toInstant().toEpochMilli()
                 val fmt = DateTimeFormatter.ofPattern("dd MMM", Locale.getDefault())
                 Triple("${startOfWeek.format(fmt)} – ${endOfWeek.format(fmt)}", start, end)
             }
@@ -226,10 +227,32 @@ fun StatisticsScreen(
     }
 
     // Build 7-Day Stacked Bar Buckets (Screenshot 3 "Dashboard" style: S M T W (T) F S)
-    val barBuckets = remember(windowTxs, categoryStats, activeType) {
+    val barBuckets = remember(windowTxs, categoryStats, activeType, periodType, periodOffset, selectedYm) {
         val topCatColorMap = categoryStats.associate { it.rootCategoryUid to it.color }
         val today = LocalDate.now()
-        val weekStart = today.minusDays((today.dayOfWeek.value % 7).toLong()) // Sunday start
+        val anchorDate = when (periodType) {
+            StatsPeriodType.WEEKLY -> today.plusWeeks(periodOffset.toLong())
+            StatsPeriodType.MONTHLY -> {
+                val targetYm = selectedYm.plusMonths(periodOffset.toLong())
+                if (targetYm == YearMonth.from(today)) {
+                    today
+                } else {
+                    windowTxs
+                        .filter { it.transaction.type == activeType }
+                        .maxOfOrNull { it.transaction.timestamp }
+                        ?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                        ?: targetYm.atDay(minOf(today.dayOfMonth, targetYm.lengthOfMonth()))
+                }
+            }
+            StatsPeriodType.ANNUALLY, StatsPeriodType.TOTAL -> {
+                windowTxs
+                    .filter { it.transaction.type == activeType }
+                    .maxOfOrNull { it.transaction.timestamp }
+                    ?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                    ?: today
+            }
+        }
+        val weekStart = anchorDate.minusDays((anchorDate.dayOfWeek.value % 7).toLong()) // Sunday start
 
         (0..6).map { dayOffset ->
             val dayDate = weekStart.plusDays(dayOffset.toLong())
@@ -251,7 +274,7 @@ fun StatisticsScreen(
 
             BarDayBucket(
                 label = dayLetter,
-                isHighlighted = dayDate == today,
+                isHighlighted = dayDate == anchorDate,
                 total = dayTotal,
                 segments = byCat
             )

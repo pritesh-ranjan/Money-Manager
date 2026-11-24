@@ -57,8 +57,11 @@ import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
 import com.moneymanager.app.domain.AppLockManager
+import com.moneymanager.app.domain.DomainValidator
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
 import com.moneymanager.app.ui.theme.*
@@ -69,6 +72,8 @@ enum class SettingsSubScreen {
     ROOT,
     CATEGORIES,
     ACCOUNT_TYPES,
+    BANKS,
+    PLATFORMS,
     CURRENCIES,
     APPEARANCE,
     SECURITY,
@@ -82,18 +87,28 @@ enum class SettingsSubScreen {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ManageScreen(
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    externalSubScreen: SettingsSubScreen? = null,
+    onExternalSubScreenConsumed: () -> Unit = {}
 ) {
     val expenseCategories by viewModel.expenseCategories.collectAsState()
     val incomeCategories by viewModel.incomeCategories.collectAsState()
     val allAccountTypes by viewModel.accountTypes.collectAsState()
+    val banks by viewModel.banks.collectAsState()
+    val platforms by viewModel.platforms.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val allTags by viewModel.allTags.collectAsState()
     val currentThemeMode by ThemePreferenceManager.themeMode.collectAsState()
     val gmailSyncState by viewModel.gmailSyncState.collectAsState()
 
-    var currentSubScreen by remember { mutableStateOf(SettingsSubScreen.ROOT) }
+    var currentSubScreen by remember { mutableStateOf(externalSubScreen ?: SettingsSubScreen.ROOT) }
+    LaunchedEffect(externalSubScreen) {
+        if (externalSubScreen != null) {
+            currentSubScreen = externalSubScreen
+            onExternalSubScreenConsumed()
+        }
+    }
     var selectedCategoryTab by remember { mutableStateOf(CategoryType.EXPENSE) }
 
     var showAddCategoryDialog by remember { mutableStateOf(false) }
@@ -101,6 +116,9 @@ fun ManageScreen(
     var showAddEditAccountTypeDialog by remember { mutableStateOf(false) }
     var accountTypeToEdit by remember { mutableStateOf<AccountTypeEntity?>(null) }
     var accountTypeToDelete by remember { mutableStateOf<AccountTypeEntity?>(null) }
+    var institutionDialogKind by remember { mutableStateOf<InstitutionKind?>(null) }
+    var institutionToEdit by remember { mutableStateOf<InstitutionEntity?>(null) }
+    var institutionToDelete by remember { mutableStateOf<InstitutionEntity?>(null) }
     var showAddCurrencyDialog by remember { mutableStateOf(false) }
     var showAddTagDialog by remember { mutableStateOf(false) }
 
@@ -228,11 +246,39 @@ fun ManageScreen(
                                 subtitle = "${allAccountTypes.size} types configured",
                                 leadingContent = {
                                     OneUiIconBadge(
-                                        icon = Icons.Default.AccountBalance,
+                                        icon = Icons.Default.AccountBalanceWallet,
                                         backgroundColor = OneUiTheme.colors.badgeBlue
                                     )
                                 },
                                 onClick = { currentSubScreen = SettingsSubScreen.ACCOUNT_TYPES }
+                            )
+
+                            OneUiInsetDivider(startIndent = 52.dp)
+
+                            OneUiListRow(
+                                title = "Banks",
+                                subtitle = if (banks.isEmpty()) "No banks added yet" else "${banks.size} bank${if (banks.size == 1) "" else "s"} configured",
+                                leadingContent = {
+                                    OneUiIconBadge(
+                                        icon = Icons.Default.AccountBalance,
+                                        backgroundColor = OneUiTheme.colors.badgeBlue
+                                    )
+                                },
+                                onClick = { currentSubScreen = SettingsSubScreen.BANKS }
+                            )
+
+                            OneUiInsetDivider(startIndent = 52.dp)
+
+                            OneUiListRow(
+                                title = "Platforms",
+                                subtitle = if (platforms.isEmpty()) "No platforms added yet" else "${platforms.size} platform${if (platforms.size == 1) "" else "s"} configured",
+                                leadingContent = {
+                                    OneUiIconBadge(
+                                        icon = Icons.AutoMirrored.Filled.TrendingUp,
+                                        backgroundColor = OneUiTheme.colors.badgePurple
+                                    )
+                                },
+                                onClick = { currentSubScreen = SettingsSubScreen.PLATFORMS }
                             )
 
                             OneUiInsetDivider(startIndent = 52.dp)
@@ -859,21 +905,56 @@ fun ManageScreen(
                             }
                         }
                     }
-
-                    item {
-                        OneUiPillButton(
-                            text = "+ Add account type",
-                            onClick = {
-                                accountTypeToEdit = null
-                                showAddEditAccountTypeDialog = true
-                            },
-                            containerColor = OneUiTheme.colors.primaryAccent,
-                            contentColor = Color.White,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
                 }
             }
+        }
+
+        SettingsSubScreen.BANKS -> {
+            InstitutionManagementSubScreen(
+                kind = InstitutionKind.BANK,
+                institutions = banks,
+                allAccounts = allAccounts,
+                onBack = { currentSubScreen = SettingsSubScreen.ROOT },
+                onAdd = {
+                    institutionToEdit = null
+                    institutionDialogKind = InstitutionKind.BANK
+                },
+                onEdit = { inst ->
+                    institutionToEdit = inst
+                    institutionDialogKind = InstitutionKind.BANK
+                },
+                onDelete = { inst, usageCount ->
+                    if (usageCount > 0) {
+                        viewModel.deleteInstitution(inst)
+                    } else {
+                        institutionToDelete = inst
+                    }
+                }
+            )
+        }
+
+        SettingsSubScreen.PLATFORMS -> {
+            InstitutionManagementSubScreen(
+                kind = InstitutionKind.PLATFORM,
+                institutions = platforms,
+                allAccounts = allAccounts,
+                onBack = { currentSubScreen = SettingsSubScreen.ROOT },
+                onAdd = {
+                    institutionToEdit = null
+                    institutionDialogKind = InstitutionKind.PLATFORM
+                },
+                onEdit = { inst ->
+                    institutionToEdit = inst
+                    institutionDialogKind = InstitutionKind.PLATFORM
+                },
+                onDelete = { inst, usageCount ->
+                    if (usageCount > 0) {
+                        viewModel.deleteInstitution(inst)
+                    } else {
+                        institutionToDelete = inst
+                    }
+                }
+            )
         }
 
         SettingsSubScreen.CURRENCIES -> {
@@ -907,8 +988,9 @@ fun ManageScreen(
                             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp)
                         ) {
                             allCurrencies.forEachIndexed { index, curr ->
+                                val currTitle = if (curr.name.contains("(${curr.symbol})")) curr.name else "${curr.name} (${curr.symbol})"
                                 OneUiListRow(
-                                    title = "${curr.name} (${curr.symbol})",
+                                    title = currTitle,
                                     subtitle = if (curr.isMainCurrency) "Primary Base Currency" else "1 ${curr.symbol} = ₹${curr.rateToBase}",
                                     subtitleColor = OneUiTheme.colors.primaryAccent,
                                     leadingContent = {
@@ -1473,6 +1555,61 @@ fun ManageScreen(
         }
     }
 
+    // Add / Edit Institution (Bank or Platform) Dialog
+    institutionDialogKind?.let { activeKind ->
+        val editing = institutionToEdit
+        val existingOfKind = if (activeKind == InstitutionKind.BANK) banks else platforms
+        val usageCount = editing?.let { target ->
+            allAccounts.count { !it.account.isArchived && it.account.institutionUid == target.uid }
+        } ?: 0
+
+        OneUiAddEditInstitutionDialog(
+            kind = activeKind,
+            existingInstitution = editing,
+            existingInstitutions = existingOfKind,
+            usageCount = usageCount,
+            onDismiss = {
+                institutionDialogKind = null
+                institutionToEdit = null
+            },
+            onSave = { saved ->
+                viewModel.saveInstitution(saved)
+                institutionDialogKind = null
+                institutionToEdit = null
+            },
+            onDelete = if (editing != null) {
+                { toDelete ->
+                    institutionDialogKind = null
+                    institutionToEdit = null
+                    if (usageCount > 0) {
+                        viewModel.deleteInstitution(toDelete)
+                    } else {
+                        institutionToDelete = toDelete
+                    }
+                }
+            } else null
+        )
+    }
+
+    // Confirm Delete Institution Dialog
+    institutionToDelete?.let { instToDelete ->
+        OneUiBottomDialog(
+            onDismissRequest = { institutionToDelete = null },
+            title = "Delete ${instToDelete.kind.displayName}",
+            confirmButtonText = "Delete",
+            confirmButtonColor = OneUiTheme.colors.expense,
+            onConfirm = {
+                viewModel.deleteInstitution(instToDelete)
+                institutionToDelete = null
+            }
+        ) {
+            Text(
+                text = "Are you sure you want to delete '${instToDelete.name}'?",
+                color = OneUiTheme.colors.textSecondary
+            )
+        }
+    }
+
     // Add Category Dialog
     if (showAddCategoryDialog) {
         val currentCats = if (selectedCategoryTab == CategoryType.EXPENSE) expenseCategories else incomeCategories
@@ -1501,6 +1638,7 @@ fun ManageScreen(
         var currSymbol by remember { mutableStateOf("🪙") }
         var rateStr by remember { mutableStateOf("0.20") }
         var isCustom by remember { mutableStateOf(true) }
+        var validationError by remember { mutableStateOf<String?>(null) }
 
         val tfColors = TextFieldDefaults.colors(
             focusedTextColor = OneUiTheme.colors.textPrimary,
@@ -1516,28 +1654,58 @@ fun ManageScreen(
             title = "Add Currency / Points",
             confirmButtonText = "Save",
             onConfirm = {
-                val rate = rateStr.toDoubleOrNull() ?: 1.0
-                if (currName.isNotBlank()) {
-                    viewModel.saveCurrency(
-                        CurrencyEntity(
-                            uid = UUID.randomUUID().toString(),
-                            name = currName.trim(),
-                            isoCode = currIso.trim().ifEmpty { currName.take(6) },
-                            symbol = currSymbol.trim().ifEmpty { "¤" },
-                            rateToBase = rate,
-                            isCustom = isCustom,
-                            decimalPlaces = if (isCustom) 0 else 2
-                        )
-                    )
+                val parsedRate = rateStr.trim().toDoubleOrNull()
+                if (parsedRate == null || !parsedRate.isFinite() || parsedRate <= 0.0) {
+                    validationError = "Enter a valid positive exchange rate"
+                    return@OneUiBottomDialog
+                }
+                val candidate = CurrencyEntity(
+                    uid = UUID.randomUUID().toString(),
+                    name = currName.trim(),
+                    isoCode = currIso.trim().uppercase(),
+                    symbol = currSymbol.trim(),
+                    rateToBase = parsedRate,
+                    isCustom = isCustom,
+                    decimalPlaces = if (isCustom) 0 else 2
+                )
+                try {
+                    DomainValidator.validateCurrency(candidate, allCurrencies)
+                    viewModel.saveCurrency(candidate)
                     showAddCurrencyDialog = false
+                } catch (e: IllegalArgumentException) {
+                    validationError = e.message ?: "Invalid currency details"
                 }
             }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (validationError != null) {
+                    Text(
+                        text = validationError!!,
+                        color = OneUiTheme.colors.expense,
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
+
                 TextField(
                     value = currName,
-                    onValueChange = { currName = it },
-                    label = { Text("Name (e.g. Scapia Coins, USD)") },
+                    onValueChange = {
+                        currName = it
+                        validationError = null
+                    },
+                    label = { Text("Name (e.g. Scapia Coins, AED)") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = tfColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                TextField(
+                    value = currIso,
+                    onValueChange = {
+                        currIso = it.uppercase()
+                        validationError = null
+                    },
+                    label = { Text("Code (e.g. AED, PTS)") },
                     singleLine = true,
                     shape = RoundedCornerShape(18.dp),
                     colors = tfColors,
@@ -1547,7 +1715,10 @@ fun ManageScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextField(
                         value = currSymbol,
-                        onValueChange = { currSymbol = it },
+                        onValueChange = {
+                            currSymbol = it
+                            validationError = null
+                        },
                         label = { Text("Symbol") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
@@ -1557,7 +1728,10 @@ fun ManageScreen(
 
                     TextField(
                         value = rateStr,
-                        onValueChange = { rateStr = it },
+                        onValueChange = {
+                            rateStr = it
+                            validationError = null
+                        },
                         label = { Text("Value in ₹") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f),
@@ -1716,15 +1890,266 @@ fun OneUiAddCategoryDialog(
 }
 
 @Composable
-private fun accountTypeVisuals(baseType: AccountType): Pair<ImageVector, Color> {
-    return when (baseType) {
-        AccountType.SAVINGS, AccountType.UPI_DEBIT -> Icons.Default.AccountBalance to OneUiTheme.colors.badgeBlue
-        AccountType.CASH, AccountType.WALLET -> Icons.Default.AccountBalanceWallet to OneUiTheme.colors.badgeGreen
-        AccountType.CREDIT_CARD -> Icons.Default.CreditCard to OneUiTheme.colors.badgeIndigo
-        AccountType.INVESTMENT, AccountType.EQUITY, AccountType.MUTUAL_FUNDS ->
-            Icons.AutoMirrored.Filled.TrendingUp to OneUiTheme.colors.badgePurple
-        AccountType.LOAN -> Icons.Default.Savings to OneUiTheme.colors.expense
-        AccountType.OTHER -> Icons.Default.Savings to OneUiTheme.colors.badgeTeal
+private fun InstitutionManagementSubScreen(
+    kind: InstitutionKind,
+    institutions: List<InstitutionEntity>,
+    allAccounts: List<com.moneymanager.app.data.local.entity.AccountWithCurrency>,
+    onBack: () -> Unit,
+    onAdd: () -> Unit,
+    onEdit: (InstitutionEntity) -> Unit,
+    onDelete: (InstitutionEntity, Int) -> Unit
+) {
+    val badgeIcon = if (kind == InstitutionKind.BANK) {
+        Icons.Default.AccountBalance
+    } else {
+        Icons.AutoMirrored.Filled.TrendingUp
+    }
+    val badgeColor = if (kind == InstitutionKind.BANK) {
+        OneUiTheme.colors.badgeBlue
+    } else {
+        OneUiTheme.colors.badgePurple
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(OneUiTheme.colors.background)
+            .statusBarsPadding()
+    ) {
+        OneUiSubScreenTopBar(
+            title = kind.pluralName,
+            onBack = onBack,
+            actions = {
+                IconButton(onClick = onAdd) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add ${kind.displayName}",
+                        tint = OneUiTheme.colors.textPrimary
+                    )
+                }
+            }
+        )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 10.dp,
+                bottom = 96.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            if (institutions.isEmpty()) {
+                item {
+                    OneUiCard {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OneUiIconBadge(
+                                icon = badgeIcon,
+                                backgroundColor = badgeColor,
+                                size = 48.dp,
+                                iconSize = 24.dp
+                            )
+                            Text(
+                                text = "No ${kind.pluralName.lowercase()} added yet",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = OneUiTheme.colors.textPrimary
+                                )
+                            )
+                            Text(
+                                text = if (kind == InstitutionKind.BANK) {
+                                    "Add banks you hold savings, credit card, loan, or wallet accounts with."
+                                } else {
+                                    "Add investment platforms (e.g. brokers or fund apps) for your equity and mutual fund accounts."
+                                },
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = OneUiTheme.colors.textSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OneUiPillButton(
+                                text = "Add ${kind.displayName}",
+                                onClick = onAdd,
+                                containerColor = OneUiTheme.colors.primaryAccent,
+                                contentColor = Color.White,
+                                leadingIcon = Icons.Default.Add
+                            )
+                        }
+                    }
+                }
+            } else {
+                item {
+                    OneUiCard(
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp)
+                    ) {
+                        institutions.forEachIndexed { index, inst ->
+                            val usageCount = allAccounts.count {
+                                !it.account.isArchived && it.account.institutionUid == inst.uid
+                            }
+                            OneUiListRow(
+                                title = inst.name,
+                                subtitle = if (usageCount > 0) {
+                                    "Used by $usageCount active account${if (usageCount == 1) "" else "s"}"
+                                } else {
+                                    "Not linked to any active account"
+                                },
+                                subtitleColor = if (usageCount > 0) OneUiTheme.colors.primaryAccent else OneUiTheme.colors.textSecondary,
+                                leadingContent = {
+                                    OneUiIconBadge(
+                                        icon = badgeIcon,
+                                        backgroundColor = badgeColor
+                                    )
+                                },
+                                trailingContent = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = { onEdit(inst) },
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit ${kind.displayName}",
+                                                tint = OneUiTheme.colors.textSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { onDelete(inst, usageCount) },
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete ${kind.displayName}",
+                                                tint = OneUiTheme.colors.textMuted,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = { onEdit(inst) }
+                            )
+
+                            if (index < institutions.lastIndex) {
+                                OneUiInsetDivider(startIndent = 52.dp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OneUiAddEditInstitutionDialog(
+    kind: InstitutionKind,
+    existingInstitution: InstitutionEntity? = null,
+    existingInstitutions: List<InstitutionEntity> = emptyList(),
+    usageCount: Int = 0,
+    onDismiss: () -> Unit,
+    onSave: (InstitutionEntity) -> Unit,
+    onDelete: ((InstitutionEntity) -> Unit)? = null
+) {
+    var name by remember(existingInstitution) { mutableStateOf(existingInstitution?.name ?: "") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    val tfColors = TextFieldDefaults.colors(
+        focusedTextColor = OneUiTheme.colors.textPrimary,
+        unfocusedTextColor = OneUiTheme.colors.textPrimary,
+        focusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        unfocusedContainerColor = OneUiTheme.colors.surfaceElevated,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent
+    )
+
+    OneUiBottomDialog(
+        onDismissRequest = onDismiss,
+        title = if (existingInstitution != null) "Edit ${kind.displayName}" else "New ${kind.displayName}",
+        confirmButtonText = if (existingInstitution != null) "Update" else "Add",
+        onConfirm = {
+            val cleanName = name.trim()
+            if (cleanName.isBlank()) {
+                validationError = "${kind.displayName} name cannot be empty"
+                return@OneUiBottomDialog
+            }
+
+            val duplicate = existingInstitutions.any {
+                it.uid != (existingInstitution?.uid ?: "") &&
+                    !it.isDeleted &&
+                    it.kind == kind &&
+                    it.name.trim().equals(cleanName, ignoreCase = true)
+            }
+            if (duplicate) {
+                validationError = "A ${kind.displayName.lowercase()} named '$cleanName' already exists"
+                return@OneUiBottomDialog
+            }
+
+            onSave(
+                InstitutionEntity(
+                    uid = existingInstitution?.uid ?: UUID.randomUUID().toString(),
+                    name = cleanName,
+                    kind = kind,
+                    sortOrder = existingInstitution?.sortOrder ?: 0,
+                    isDeleted = false
+                )
+            )
+        }
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (validationError != null) {
+                Text(
+                    text = validationError!!,
+                    color = OneUiTheme.colors.expense,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                )
+            }
+
+            TextField(
+                value = name,
+                onValueChange = {
+                    name = it
+                    validationError = null
+                },
+                label = { Text("${kind.displayName} Name") },
+                placeholder = {
+                    Text(
+                        if (kind == InstitutionKind.BANK) "e.g. HDFC Bank, ICICI Bank" else "e.g. Zerodha, Groww",
+                        color = OneUiTheme.colors.textMuted
+                    )
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = tfColors,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (existingInstitution != null && usageCount > 0) {
+                Text(
+                    text = "Updating this name will automatically update all $usageCount linked account${if (usageCount == 1) "" else "s"}.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = OneUiTheme.colors.textSecondary,
+                        fontSize = 12.sp
+                    )
+                )
+            }
+
+            if (existingInstitution != null && onDelete != null) {
+                OneUiPillButton(
+                    text = "Delete ${kind.displayName}",
+                    onClick = { onDelete(existingInstitution) },
+                    containerColor = OneUiTheme.colors.expenseContainer,
+                    contentColor = OneUiTheme.colors.expense,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
     }
 }
 

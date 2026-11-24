@@ -93,46 +93,64 @@ object CreditCardStatementEngine {
 
         // Track full ledger balance using the same sign rules as NetWorthCalculator
         var rawLedgerBalance = -card.openingBalance
+        var ledgerBalanceAtLastCutoff = -card.openingBalance
 
         for (tx in transactions) {
             if (tx.isDeleted) continue
+
+            val txTime = tx.timestamp
 
             when (tx.type) {
                 TransactionType.INCOME -> {
                     if (tx.accountUid == card.uid) {
                         rawLedgerBalance += tx.accountAmount
+                        if (txTime <= lastCutoffMillis) {
+                            ledgerBalanceAtLastCutoff += tx.accountAmount
+                        }
                     }
                 }
                 TransactionType.EXPENSE -> {
                     if (tx.accountUid == card.uid) {
                         rawLedgerBalance -= tx.accountAmount
+                        if (txTime <= lastCutoffMillis) {
+                            ledgerBalanceAtLastCutoff -= tx.accountAmount
+                        }
                     }
                 }
                 TransactionType.TRANSFER -> {
                     if (tx.accountUid == card.uid) {
                         rawLedgerBalance -= tx.accountAmount
+                        if (txTime <= lastCutoffMillis) {
+                            ledgerBalanceAtLastCutoff -= tx.accountAmount
+                        }
                     }
                     if (tx.toAccountUid == card.uid) {
-                        rawLedgerBalance += (tx.toAccountAmount ?: tx.accountAmount)
+                        val creditAmt = tx.toAccountAmount ?: tx.accountAmount
+                        rawLedgerBalance += creditAmt
+                        if (txTime <= lastCutoffMillis) {
+                            ledgerBalanceAtLastCutoff += creditAmt
+                        }
                     }
                 }
                 TransactionType.ADJUSTMENT -> {
                     if (tx.accountUid == card.uid) {
                         rawLedgerBalance += tx.accountAmount
+                        if (txTime <= lastCutoffMillis) {
+                            ledgerBalanceAtLastCutoff += tx.accountAmount
+                        }
                     }
                 }
             }
 
-            val txTime = tx.timestamp
-
-            // Is this a payment/transfer into this card?
+            // Is this a payment/transfer into this card or outgoing from this card?
             val isPaymentToCard = tx.type == TransactionType.TRANSFER && tx.toAccountUid == card.uid
+            val isTransferFromCard = tx.type == TransactionType.TRANSFER && tx.accountUid == card.uid
             val isCardExpense = tx.accountUid == card.uid && tx.type == TransactionType.EXPENSE
             val isCardRefund = tx.accountUid == card.uid && tx.type == TransactionType.INCOME
             val isCardAdjustment = tx.accountUid == card.uid && tx.type == TransactionType.ADJUSTMENT
 
             if (txTime in (prevCutoffMillis + 1)..lastCutoffMillis) {
-                if (isCardExpense) {
+                if (isCardExpense || isTransferFromCard) {
                     billedSpends += tx.accountAmount
                 } else if (isCardRefund) {
                     billedCredits += tx.accountAmount
@@ -142,7 +160,7 @@ object CreditCardStatementEngine {
             } else if (txTime > lastCutoffMillis) {
                 if (isPaymentToCard) {
                     paymentsSinceStatement += (tx.toAccountAmount ?: tx.accountAmount)
-                } else if (isCardExpense) {
+                } else if (isCardExpense || isTransferFromCard) {
                     unbilledSpends += tx.accountAmount
                 } else if (isCardRefund) {
                     unbilledCredits += tx.accountAmount
@@ -152,7 +170,9 @@ object CreditCardStatementEngine {
             }
         }
 
-        val statementBilled = maxOf(0.0, billedSpends - billedCredits)
+        val cycleBilled = maxOf(0.0, billedSpends - billedCredits)
+        val closingDebtAtCutoff = maxOf(0.0, -ledgerBalanceAtLastCutoff)
+        val statementBilled = maxOf(cycleBilled, closingDebtAtCutoff)
         val totalOutstanding = maxOf(0.0, -rawLedgerBalance)
         val remainingStatementDue = minOf(maxOf(0.0, statementBilled - paymentsSinceStatement), totalOutstanding)
         val unbilled = maxOf(0.0, unbilledSpends - unbilledCredits)

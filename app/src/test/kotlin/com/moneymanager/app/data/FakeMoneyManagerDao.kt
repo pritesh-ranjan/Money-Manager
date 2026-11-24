@@ -11,6 +11,8 @@ import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CategoryWithSubcategories
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionTagCrossRef
@@ -24,6 +26,7 @@ class FakeMoneyManagerDao : MoneyManagerDao {
 
     val currenciesFlow = MutableStateFlow<List<CurrencyEntity>>(emptyList())
     val accountTypesFlow = MutableStateFlow<List<AccountTypeEntity>>(AccountTypeDefaults.defaultEntities())
+    val institutionsFlow = MutableStateFlow<List<InstitutionEntity>>(emptyList())
     val accountsFlow = MutableStateFlow<List<AccountEntity>>(emptyList())
     val categoriesFlow = MutableStateFlow<List<CategoryEntity>>(emptyList())
     val tagsFlow = MutableStateFlow<List<TagEntity>>(emptyList())
@@ -113,13 +116,17 @@ class FakeMoneyManagerDao : MoneyManagerDao {
 
     override suspend fun updateAccountBaseTypeForTypeUid(typeUid: String, baseType: AccountType) {
         accountsFlow.value = accountsFlow.value.map { acc ->
-            if (acc.accountTypeUid == typeUid) acc.copy(accountType = baseType) else acc
+            if (acc.resolvedAccountTypeUid == typeUid) {
+                acc.copy(accountType = baseType, accountTypeUid = typeUid)
+            } else {
+                acc
+            }
         }
     }
 
     override suspend fun clearCreditCardFieldsForTypeUid(typeUid: String) {
         accountsFlow.value = accountsFlow.value.map { acc ->
-            if (acc.accountTypeUid == typeUid) {
+            if (acc.resolvedAccountTypeUid == typeUid) {
                 acc.copy(
                     statementDay = null,
                     paymentDueDay = null,
@@ -134,6 +141,71 @@ class FakeMoneyManagerDao : MoneyManagerDao {
 
     override suspend fun clearAllAccountTypes() {
         accountTypesFlow.value = emptyList()
+    }
+
+    // --- Institutions ---
+    override fun getAllInstitutions(): Flow<List<InstitutionEntity>> {
+        return institutionsFlow.map { list ->
+            list.filter { !it.isDeleted }
+                .sortedWith(compareBy({ it.sortOrder }, { it.name }))
+        }
+    }
+
+    override suspend fun getAllInstitutionsRaw(): List<InstitutionEntity> = institutionsFlow.value
+
+    override suspend fun getInstitutionById(uid: String): InstitutionEntity? {
+        return institutionsFlow.value.firstOrNull { it.uid == uid }
+    }
+
+    override suspend fun insertInstitution(institution: InstitutionEntity) {
+        val current = institutionsFlow.value.toMutableList()
+        current.removeAll { it.uid == institution.uid }
+        current.add(institution)
+        institutionsFlow.value = current
+    }
+
+    override suspend fun insertInstitutions(institutions: List<InstitutionEntity>) {
+        val current = institutionsFlow.value.toMutableList()
+        for (inst in institutions) {
+            current.removeAll { it.uid == inst.uid }
+            current.add(inst)
+        }
+        institutionsFlow.value = current
+    }
+
+    override suspend fun updateInstitution(institution: InstitutionEntity) {
+        insertInstitution(institution)
+    }
+
+    override suspend fun softDeleteInstitution(uid: String) {
+        institutionsFlow.value = institutionsFlow.value.map { inst ->
+            if (inst.uid == uid) inst.copy(isDeleted = true) else inst
+        }
+    }
+
+    override suspend fun countAccountsUsingInstitution(institutionUid: String): Int {
+        return accountsFlow.value.count { !it.isArchived && it.institutionUid == institutionUid }
+    }
+
+    override suspend fun clearCardNetworkForTypeUid(typeUid: String) {
+        accountsFlow.value = accountsFlow.value.map { acc ->
+            if (acc.resolvedAccountTypeUid == typeUid) acc.copy(cardNetwork = null) else acc
+        }
+    }
+
+    override suspend fun clearMismatchedInstitutionsForTypeUid(typeUid: String, requiredKind: InstitutionKind) {
+        val validUids = institutionsFlow.value.filter { it.kind == requiredKind }.map { it.uid }.toSet()
+        accountsFlow.value = accountsFlow.value.map { acc ->
+            if (acc.resolvedAccountTypeUid == typeUid && acc.institutionUid != null && acc.institutionUid !in validUids) {
+                acc.copy(institutionUid = null)
+            } else {
+                acc
+            }
+        }
+    }
+
+    override suspend fun clearAllInstitutions() {
+        institutionsFlow.value = emptyList()
     }
 
     // --- Accounts ---
@@ -245,7 +317,10 @@ class FakeMoneyManagerDao : MoneyManagerDao {
 
     override suspend fun insertTag(tag: TagEntity) {
         val current = tagsFlow.value.toMutableList()
-        if (current.none { it.uid == tag.uid }) {
+        val conflict = current.any {
+            it.uid == tag.uid || it.name.equals(tag.name, ignoreCase = true)
+        }
+        if (!conflict) {
             current.add(tag)
             tagsFlow.value = current
         }
@@ -254,7 +329,10 @@ class FakeMoneyManagerDao : MoneyManagerDao {
     override suspend fun insertTags(tags: List<TagEntity>) {
         val current = tagsFlow.value.toMutableList()
         for (t in tags) {
-            if (current.none { it.uid == t.uid }) {
+            val conflict = current.any {
+                it.uid == t.uid || it.name.equals(t.name, ignoreCase = true)
+            }
+            if (!conflict) {
                 current.add(t)
             }
         }
@@ -293,7 +371,7 @@ class FakeMoneyManagerDao : MoneyManagerDao {
 
     override fun getTransactionsForAccount(accountUid: String): Flow<List<TransactionWithDetails>> {
         return transactionsFlow.map { txs ->
-            txs.filter { !it.isDeleted && it.accountUid == accountUid }
+            txs.filter { !it.isDeleted && (it.accountUid == accountUid || it.toAccountUid == accountUid) }
                 .sortedByDescending { it.timestamp }
                 .mapNotNull { buildTransactionWithDetails(it) }
         }

@@ -6,14 +6,23 @@ import com.moneymanager.app.data.MoneyManagerRepository
 import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.AccountTypeEntity
+import com.moneymanager.app.data.local.entity.CardNetwork
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
+import com.moneymanager.app.data.local.entity.InstitutionRequirement
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.institutionRequirement
+import com.moneymanager.app.data.local.entity.requiredInstitutionKind
+import com.moneymanager.app.data.local.entity.resolvedInstitutionName
 import com.moneymanager.app.data.local.entity.resolvedTypeName
+import com.moneymanager.app.domain.cards.CreditCardMappingStorage
 import com.moneymanager.app.notifications.QuickAddNotificationManager
+import com.moneymanager.app.ui.components.getAccountDisplayInfo
 import com.moneymanager.app.ui.screens.formatAccountBalanceText
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -743,5 +752,314 @@ class AccountAndCardCrudValidationTest {
         assertEquals("₹ 5,000.00", formatAccountBalanceText(5000.0, "₹", isLiability = false))
         assertEquals("-₹ 500.00", formatAccountBalanceText(-500.0, "₹", isLiability = false))
         assertEquals("₹ 0.00", formatAccountBalanceText(0.0, "₹", isLiability = false))
+    }
+
+    @Test
+    fun testCreditCardSettlementValidation_rejectsMissingOrArchivedAndClearsWhenConvertedToLiability() = runTest {
+        val bank = AccountEntity("acc_bank_valid", "Bank", AccountType.SAVINGS, inr.uid)
+        val archivedBank = AccountEntity("acc_bank_arch", "Archived Bank", AccountType.SAVINGS, inr.uid, isArchived = true)
+        dao.insertAccounts(listOf(bank, archivedBank))
+
+        // Non-existent settlement account rejected
+        try {
+            repository.saveAccount(
+                AccountEntity(
+                    uid = "cc_missing_settle",
+                    name = "Missing Settle Card",
+                    accountType = AccountType.CREDIT_CARD,
+                    currencyUid = inr.uid,
+                    settlementAccountUid = "does_not_exist"
+                )
+            )
+            fail("Expected IllegalArgumentException for missing settlement account")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("does not exist", ignoreCase = true))
+        }
+
+        // Archived settlement account rejected
+        try {
+            repository.saveAccount(
+                AccountEntity(
+                    uid = "cc_arch_settle",
+                    name = "Archived Settle Card",
+                    accountType = AccountType.CREDIT_CARD,
+                    currencyUid = inr.uid,
+                    settlementAccountUid = archivedBank.uid
+                )
+            )
+            fail("Expected IllegalArgumentException for archived settlement account")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("archived", ignoreCase = true))
+        }
+
+        // Valid card linked to bank
+        val card = AccountEntity(
+            uid = "cc_valid_settle",
+            name = "Valid Settle Card",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            settlementAccountUid = bank.uid
+        )
+        repository.saveAccount(card)
+
+        // Converting bank into a liability account clears card's settlementAccountUid
+        repository.saveAccount(bank.copy(accountType = AccountType.LOAN, accountTypeUid = AccountType.LOAN.name))
+        val updatedCard = dao.getAccountWithCurrencyById("cc_valid_settle")!!.account
+        assertNull(updatedCard.settlementAccountUid)
+    }
+
+    @Test
+    fun testLegacyNullAccountTypeUid_updatesWhenAccountTypeIsEdited() = runTest {
+        val customType = AccountTypeEntity(
+            uid = "type_legacy",
+            name = "Legacy Card",
+            baseType = AccountType.CREDIT_CARD,
+            isLiability = true
+        )
+        repository.saveAccountType(customType)
+
+        // Insert account with null accountTypeUid matching AccountType.OTHER
+        val legacyAcc = AccountEntity(
+            uid = "acc_legacy_null",
+            name = "Legacy Account",
+            accountType = AccountType.OTHER,
+            currencyUid = inr.uid,
+            accountTypeUid = null
+        )
+        dao.insertAccount(legacyAcc)
+
+        // Reclassify built-in OTHER type -> must also update legacy account where accountTypeUid was null
+        val otherType = dao.getAccountTypeById(AccountType.OTHER.name)!!
+        repository.saveAccountType(otherType.copy(baseType = AccountType.SAVINGS, isLiability = false))
+
+        val updatedLegacy = dao.getAccountWithCurrencyById("acc_legacy_null")!!.account
+        assertEquals(AccountType.SAVINGS, updatedLegacy.accountType)
+    }
+
+    @Test
+    fun testInstitutionCrudAndCentralizedAccountValidation() = runTest {
+        val hdfc = InstitutionEntity(uid = "inst_hdfc", name = "HDFC Bank", kind = InstitutionKind.BANK)
+        val zerodha = InstitutionEntity(uid = "inst_zerodha", name = "Zerodha", kind = InstitutionKind.PLATFORM)
+        repository.saveInstitution(hdfc)
+        repository.saveInstitution(zerodha)
+
+        // Duplicate bank name (case-insensitive) must fail
+        try {
+            repository.saveInstitution(InstitutionEntity(uid = "inst_hdfc_2", name = "hdfc bank", kind = InstitutionKind.BANK))
+            fail("Expected duplicate bank rejection")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("already exists", ignoreCase = true))
+        }
+
+        // Same name allowed across different kinds (BANK vs PLATFORM)
+        val paytmBank = InstitutionEntity(uid = "inst_paytm_bank", name = "Paytm", kind = InstitutionKind.BANK)
+        val paytmPlatform = InstitutionEntity(uid = "inst_paytm_plat", name = "Paytm", kind = InstitutionKind.PLATFORM)
+        repository.saveInstitution(paytmBank)
+        repository.saveInstitution(paytmPlatform)
+
+        // Savings account with Bank succeeds; Platform for Savings fails
+        val savingsAcc = AccountEntity(
+            uid = "acc_hdfc_sav",
+            name = "HDFC Salary",
+            accountType = AccountType.SAVINGS,
+            currencyUid = inr.uid,
+            accountNumber = "1234",
+            institutionUid = hdfc.uid
+        )
+        repository.saveAccount(savingsAcc)
+
+        try {
+            repository.saveAccount(savingsAcc.copy(uid = "acc_bad_sav", name = "Bad Savings", institutionUid = zerodha.uid))
+            fail("Expected bank-vs-platform mismatch rejection for SAVINGS")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("bank", ignoreCase = true))
+        }
+
+        // Equity / Mutual Funds require Platform, reject Bank
+        val equityAcc = AccountEntity(
+            uid = "acc_eq_zerodha",
+            name = "Zerodha Kite",
+            accountType = AccountType.EQUITY,
+            currencyUid = inr.uid,
+            accountNumber = "ZK9988",
+            institutionUid = zerodha.uid
+        )
+        repository.saveAccount(equityAcc)
+
+        try {
+            repository.saveAccount(
+                AccountEntity(
+                    uid = "acc_bad_mf",
+                    name = "Bad MF",
+                    accountType = AccountType.MUTUAL_FUNDS,
+                    currencyUid = inr.uid,
+                    institutionUid = hdfc.uid
+                )
+            )
+            fail("Expected platform mismatch rejection for MUTUAL_FUNDS")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("platform", ignoreCase = true))
+        }
+
+        // Credit Card stores Bank + Network, cleared if changed to Savings
+        val ccAcc = AccountEntity(
+            uid = "acc_hdfc_cc",
+            name = "HDFC Millennia",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            accountNumber = "4321",
+            institutionUid = hdfc.uid,
+            cardNetwork = CardNetwork.VISA
+        )
+        repository.saveAccount(ccAcc)
+        assertEquals(CardNetwork.VISA, dao.getAccountWithCurrencyById(ccAcc.uid)!!.account.cardNetwork)
+
+        // Updating institution name centrally updates resolved name
+        repository.saveInstitution(hdfc.copy(name = "HDFC Bank Ltd"))
+        val institutionsMap = repository.allInstitutions.first().associateBy { it.uid }
+        assertEquals("HDFC Bank Ltd", savingsAcc.resolvedInstitutionName(institutionsMap))
+
+        // Deleting institution in use must be rejected
+        try {
+            repository.deleteInstitution(hdfc)
+            fail("Expected deletion of in-use institution to fail")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("in use", ignoreCase = true))
+        }
+
+        // Deleting unused institution succeeds
+        repository.deleteInstitution(paytmBank)
+        assertFalse(repository.allInstitutions.first().any { it.uid == paytmBank.uid })
+    }
+
+    @Test
+    fun testAccountTypeInstitutionRequirements() {
+        assertEquals(InstitutionRequirement.PLATFORM_REQUIRED, AccountType.EQUITY.institutionRequirement())
+        assertEquals(InstitutionRequirement.PLATFORM_REQUIRED, AccountType.MUTUAL_FUNDS.institutionRequirement())
+        assertEquals(InstitutionKind.PLATFORM, AccountType.EQUITY.requiredInstitutionKind())
+        assertEquals(InstitutionKind.PLATFORM, AccountType.MUTUAL_FUNDS.requiredInstitutionKind())
+
+        assertEquals(InstitutionRequirement.BANK_AND_NETWORK_REQUIRED, AccountType.CREDIT_CARD.institutionRequirement())
+        assertEquals(InstitutionKind.BANK, AccountType.CREDIT_CARD.requiredInstitutionKind())
+
+        assertEquals(InstitutionRequirement.BANK_OPTIONAL, AccountType.CASH.institutionRequirement())
+        assertEquals(InstitutionRequirement.BANK_REQUIRED, AccountType.SAVINGS.institutionRequirement())
+        assertEquals(InstitutionRequirement.BANK_REQUIRED, AccountType.WALLET.institutionRequirement())
+        assertEquals(InstitutionRequirement.BANK_REQUIRED, AccountType.INVESTMENT.institutionRequirement())
+        assertEquals(InstitutionRequirement.BANK_REQUIRED, AccountType.UPI_DEBIT.institutionRequirement())
+        assertEquals(InstitutionRequirement.BANK_REQUIRED, AccountType.LOAN.institutionRequirement())
+        assertEquals(InstitutionRequirement.BANK_REQUIRED, AccountType.OTHER.institutionRequirement())
+    }
+
+    @Test
+    fun testStatementCardAccountResolution_matchesStructuredFieldsAndAvoidsSameBankCollision() = runTest {
+        val hdfc = InstitutionEntity(uid = "inst_hdfc", name = "HDFC Bank", kind = InstitutionKind.BANK)
+        val axis = InstitutionEntity(uid = "inst_axis", name = "Axis Bank", kind = InstitutionKind.BANK)
+        val institutionsMap = mapOf(hdfc.uid to hdfc, axis.uid to axis)
+
+        val swiggyCard = AccountEntity(
+            uid = "cc_swiggy",
+            name = "Swiggy",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            accountNumber = "3453",
+            institutionUid = hdfc.uid,
+            cardNetwork = CardNetwork.MASTERCARD
+        )
+        val axisAirtel = AccountEntity(
+            uid = "cc_axis_airtel",
+            name = "Airtel",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            accountNumber = "3004",
+            institutionUid = axis.uid,
+            cardNetwork = CardNetwork.VISA
+        )
+        val axisHorizon = AccountEntity(
+            uid = "cc_axis_horizon",
+            name = "Horizon",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            accountNumber = "8158",
+            institutionUid = axis.uid,
+            cardNetwork = CardNetwork.VISA
+        )
+        val allCards = listOf(swiggyCard, axisAirtel, axisHorizon)
+
+        // Matches card even though account.name ("Swiggy") doesn't contain "HDFC" or "3453"
+        val resolvedSwiggy = CreditCardMappingStorage.resolveCardAccount(
+            mappedAccountUid = null,
+            statementBankName = "HDFC Bank",
+            cardMasked = "526873XXXXXX3453",
+            accounts = allCards,
+            institutionsMap = institutionsMap
+        )
+        assertEquals(swiggyCard.uid, resolvedSwiggy?.uid)
+
+        // Disambiguates two cards from the same bank using accountNumber last-4
+        val resolvedHorizon = CreditCardMappingStorage.resolveCardAccount(
+            mappedAccountUid = null,
+            statementBankName = "Axis Bank",
+            cardMasked = "418688******8158",
+            accounts = allCards,
+            institutionsMap = institutionsMap
+        )
+        assertEquals(axisHorizon.uid, resolvedHorizon?.uid)
+
+        // Explicit mapping overrides everything
+        val resolvedExplicit = CreditCardMappingStorage.resolveCardAccount(
+            mappedAccountUid = axisAirtel.uid,
+            statementBankName = "Axis Bank",
+            cardMasked = "418688******8158",
+            accounts = allCards,
+            institutionsMap = institutionsMap
+        )
+        assertEquals(axisAirtel.uid, resolvedExplicit?.uid)
+
+        // Single un-numbered card for bank still matches by bank institution name
+        val icici = InstitutionEntity(uid = "inst_icici", name = "ICICI", kind = InstitutionKind.BANK)
+        val amazonCard = AccountEntity(
+            uid = "cc_amazon",
+            name = "Amazon Pay",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            institutionUid = icici.uid
+        )
+        val resolvedIcici = CreditCardMappingStorage.resolveCardAccount(
+            mappedAccountUid = null,
+            statementBankName = "ICICI Bank",
+            cardMasked = "4315XXXXXXXX3004",
+            accounts = listOf(amazonCard),
+            institutionsMap = mapOf(icici.uid to icici)
+        )
+        assertEquals(amazonCard.uid, resolvedIcici?.uid)
+        assertEquals(icici.uid, CreditCardMappingStorage.findMatchingBankInstitution("ICICI Bank", listOf(hdfc, icici))?.uid)
+    }
+
+    @Test
+    fun testSaveAccount_masksFullCreditCardPanAndFormatsDisplayInfo() = runTest {
+        val hdfc = InstitutionEntity(uid = "inst_hdfc", name = "HDFC Bank", kind = InstitutionKind.BANK)
+        repository.saveInstitution(hdfc)
+
+        val rawCard = AccountEntity(
+            uid = "cc_pan_test",
+            name = "HDFC Millennia",
+            accountType = AccountType.CREDIT_CARD,
+            currencyUid = inr.uid,
+            accountNumber = "4186881234568158",
+            institutionUid = hdfc.uid,
+            cardNetwork = CardNetwork.VISA
+        )
+        repository.saveAccount(rawCard)
+
+        val saved = dao.getAccountWithCurrencyById(rawCard.uid)!!.account
+        assertEquals("4186XXXXXXXX8158", saved.accountNumber)
+
+        val (displayTitle, displaySubtitle) = getAccountDisplayInfo(
+            account = saved,
+            institutionsMap = mapOf(hdfc.uid to hdfc)
+        )
+        assertEquals("HDFC Millennia", displayTitle)
+        assertEquals("HDFC Bank • Visa • •••• 8158", displaySubtitle)
     }
 }

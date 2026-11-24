@@ -87,8 +87,8 @@ fun TransactionsScreen(
 
     // 7-day strip centered around today (if current month) or end/middle of selected month
     val today = remember { LocalDate.now() }
-    val referenceDate = remember(selectedYm, selectedDateFilter) {
-        selectedDateFilter ?: if (selectedYm == YearMonth.from(today)) {
+    val referenceDate = remember(selectedYm) {
+        if (selectedYm == YearMonth.from(today)) {
             today
         } else {
             selectedYm.atDay(minOf(today.dayOfMonth, selectedYm.lengthOfMonth()))
@@ -98,15 +98,6 @@ fun TransactionsScreen(
     val sevenDayStrip = remember(referenceDate) {
         (-3..3).map { offset -> referenceDate.plusDays(offset.toLong()) }
     }
-
-    // Monthly Totals
-    val totalIncome = remember(transactions) {
-        transactions.filter { it.transaction.type == TransactionType.INCOME }.sumOf { it.transaction.baseAmount }
-    }
-    val totalExpense = remember(transactions) {
-        transactions.filter { it.transaction.type == TransactionType.EXPENSE }.sumOf { it.transaction.baseAmount }
-    }
-    val netTotal = totalIncome - totalExpense
 
     // Apply 7-day Date Filter if user clicked a specific day on the strip
     val displayedTransactions = remember(transactions, selectedDateFilter) {
@@ -121,6 +112,15 @@ fun TransactionsScreen(
             }
         }
     }
+
+    // Totals for the displayed period (full month or selected day)
+    val totalIncome = remember(displayedTransactions) {
+        displayedTransactions.filter { it.transaction.type == TransactionType.INCOME }.sumOf { it.transaction.baseAmount }
+    }
+    val totalExpense = remember(displayedTransactions) {
+        displayedTransactions.filter { it.transaction.type == TransactionType.EXPENSE }.sumOf { it.transaction.baseAmount }
+    }
+    val netTotal = totalIncome - totalExpense
 
     val groupedByDay = remember(displayedTransactions) {
         displayedTransactions.groupBy { item ->

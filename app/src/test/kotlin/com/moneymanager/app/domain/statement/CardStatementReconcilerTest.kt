@@ -191,4 +191,83 @@ class CardStatementReconcilerTest {
         assertEquals(1, report.unmatchedManualTransactions.size)
         assertEquals(1200.0, report.unmatchedManualTransactions.first().transaction.accountAmount, 0.001)
     }
+
+    @Test
+    fun testReconciliation_MatchesBillPaymentTransferToCardAndTreatsOutgoingTransferAsDebit() {
+        val dateDebit = LocalDate.of(2026, 9, 22)
+        val datePayment = LocalDate.of(2026, 10, 2)
+
+        val savingsAccount = AccountEntity(
+            uid = "acc_savings",
+            name = "HDFC Savings",
+            accountType = AccountType.SAVINGS,
+            currencyUid = "curr_inr"
+        )
+        val walletAccount = AccountEntity(
+            uid = "acc_wallet",
+            name = "Paytm Wallet",
+            accountType = AccountType.WALLET,
+            currencyUid = "curr_inr"
+        )
+
+        val statementTxs = listOf(
+            createStatementTx("st_debit", 1200.0, dateDebit, "Paytm Wallet Load", isCredit = false),
+            createStatementTx("st_payment", 2000.0, datePayment, "BBPS Payment Received", isCredit = true)
+        )
+
+        val outgoingTransferFromCard = TransactionWithDetails(
+            transaction = TransactionEntity(
+                uid = "m_out_trf",
+                type = TransactionType.TRANSFER,
+                accountAmount = 1200.0,
+                baseAmount = 1200.0,
+                currencyUid = testCurrency.uid,
+                accountUid = testAccount.uid,
+                toAccountUid = walletAccount.uid,
+                toAccountAmount = 1200.0,
+                note = "Wallet load",
+                timestamp = dateDebit.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            ),
+            account = testAccount,
+            toAccount = walletAccount,
+            currency = testCurrency
+        )
+
+        val billPaymentToCard = TransactionWithDetails(
+            transaction = TransactionEntity(
+                uid = "m_bill_pay",
+                type = TransactionType.TRANSFER,
+                accountAmount = 2000.0,
+                baseAmount = 2000.0,
+                currencyUid = testCurrency.uid,
+                accountUid = savingsAccount.uid,
+                toAccountUid = testAccount.uid,
+                toAccountAmount = 2000.0,
+                note = "Credit Card Bill Payment",
+                timestamp = datePayment.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            ),
+            account = savingsAccount,
+            toAccount = testAccount,
+            currency = testCurrency
+        )
+
+        val report = CardStatementReconciler.reconcile(
+            statementId = "stmt_test_01",
+            cardMasked = "•• 3004",
+            statementTransactions = statementTxs,
+            manualTransactions = listOf(outgoingTransferFromCard, billPaymentToCard),
+            periodStartEpochDay = LocalDate.of(2026, 9, 16).toEpochDay(),
+            periodEndEpochDay = LocalDate.of(2026, 10, 15).toEpochDay(),
+            cardAccountUid = testAccount.uid
+        )
+
+        assertTrue("Bill payment transfer and outgoing transfer must reconcile cleanly", report.isFullyReconciled)
+        assertFalse(report.hasDiscrepancy)
+        assertEquals(2, report.matchedTransactions.size)
+        assertEquals(1200.0, report.statementTotalDebits, 0.001)
+        assertEquals(1200.0, report.manualTotalDebits, 0.001)
+        assertEquals(2000.0, report.statementTotalCredits, 0.001)
+        assertEquals(2000.0, report.manualTotalCredits, 0.001)
+        assertEquals(0.0, report.varianceAmount, 0.001)
+    }
 }

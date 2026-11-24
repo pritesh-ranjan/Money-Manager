@@ -36,6 +36,23 @@ class FeatureIntegrityAndroidTest {
         context = ApplicationProvider.getApplicationContext()
         PDFBoxResourceLoader.init(context)
         database = AppDatabase.getDatabase(context)
+        database.clearAllTables()
+        runBlocking {
+            val dao = database.moneyManagerDao()
+            dao.insertAccountTypes(AccountTypeDefaults.defaultEntities())
+            dao.insertCurrencies(
+                listOf(
+                    CurrencyEntity(
+                        uid = "CURRENCY_INR",
+                        name = "INR - India (₹)",
+                        isoCode = "INR",
+                        symbol = "₹",
+                        rateToBase = 1.0,
+                        isMainCurrency = true
+                    )
+                )
+            )
+        }
         repository = MoneyManagerRepository(database.moneyManagerDao(), database.insightsDao())
         statementRepository = StatementRepository(database.statementDao())
     }
@@ -229,6 +246,12 @@ class FeatureIntegrityAndroidTest {
             assertNotNull("Imported summary must exist in database", importedSummary)
             assertEquals(parseResult.metadata.bankName, importedSummary!!.bankName)
             assertEquals(parseResult.summary.totalAmountDue, importedSummary.statementTotalDue, 0.01)
+            if (importedSummary.statementTotalDue > 0.01) {
+                assertFalse(
+                    "Newly imported statement with balance due must start unpaid",
+                    importedSummary.isReconciled
+                )
+            }
 
             // Verify statement transactions persisted
             val savedTxs = statementRepository.getTransactionsByStatementIdRaw(statementId)

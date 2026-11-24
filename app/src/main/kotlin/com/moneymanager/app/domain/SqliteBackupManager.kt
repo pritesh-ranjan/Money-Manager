@@ -10,9 +10,12 @@ import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.AccountTypeDefaults
 import com.moneymanager.app.data.local.entity.AccountTypeEntity
+import com.moneymanager.app.data.local.entity.CardNetwork
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionTagCrossRef
@@ -201,6 +204,25 @@ object SqliteBackupManager {
             }
         }
 
+        if (currencies.isEmpty()) {
+            currencies.add(
+                CurrencyEntity(
+                    uid = "CURRENCY_INR",
+                    name = "INR - India (₹)",
+                    isoCode = "INR",
+                    symbol = "₹",
+                    rateToBase = 1.0,
+                    isMainCurrency = true
+                )
+            )
+        } else if (currencies.none { it.isMainCurrency }) {
+            val firstMain = currencies.firstOrNull { it.isoCode.equals("INR", ignoreCase = true) } ?: currencies.first()
+            val idx = currencies.indexOf(firstMain)
+            currencies[idx] = firstMain.copy(isMainCurrency = true, rateToBase = 1.0)
+        }
+        val validCurrencyUids = currencies.map { it.uid }.toSet()
+        val fallbackCurrencyUid = currencies.first { it.isMainCurrency }.uid
+
         // 1b. Account Types
         val accountTypes = mutableListOf<AccountTypeEntity>()
         if (hasTable(db, "account_types")) {
@@ -232,6 +254,33 @@ object SqliteBackupManager {
             accountTypes.addAll(AccountTypeDefaults.defaultEntities())
         }
 
+        // 1c. Institutions (Banks & Platforms)
+        val institutions = mutableListOf<InstitutionEntity>()
+        if (hasTable(db, "institutions")) {
+            db.rawQuery("SELECT * FROM institutions", null).use { c ->
+                while (c.moveToNext()) {
+                    val uid = c.getStringOrDefault("uid", UUID.randomUUID().toString())
+                    val name = c.getStringOrDefault("name", "")
+                    val kindStr = c.getStringOrDefault("kind", InstitutionKind.BANK.name)
+                    val kind = try { InstitutionKind.valueOf(kindStr) } catch (_: Exception) { InstitutionKind.BANK }
+                    val sortOrder = c.getIntOrDefault("sortOrder", 0)
+                    val isDeleted = c.getIntOrDefault("isDeleted", 0) == 1
+                    if (name.isNotBlank()) {
+                        institutions.add(
+                            InstitutionEntity(
+                                uid = uid,
+                                name = name,
+                                kind = kind,
+                                sortOrder = sortOrder,
+                                isDeleted = isDeleted
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        val validInstitutionUids = institutions.map { it.uid }.toSet()
+
         // 2. Accounts
         val accounts = mutableListOf<AccountEntity>()
         if (hasTable(db, "accounts")) {
@@ -242,7 +291,8 @@ object SqliteBackupManager {
                     val typeStr = c.getStringOrDefault("accountType", AccountType.SAVINGS.name)
                     val accountType = try { AccountType.valueOf(typeStr) } catch (_: Exception) { AccountType.SAVINGS }
                     val accountTypeUid = c.getStringOrNull("accountTypeUid")?.takeIf { it.isNotBlank() } ?: accountType.name
-                    val currencyUid = c.getStringOrDefault("currencyUid", currencies.firstOrNull()?.uid ?: "CURRENCY_INR")
+                    val rawCurrUid = c.getStringOrDefault("currencyUid", fallbackCurrencyUid)
+                    val currencyUid = if (rawCurrUid in validCurrencyUids) rawCurrUid else fallbackCurrencyUid
                     val rawOpenBal = c.getDoubleOrDefault("openingBalance", 0.0)
                     val openBal = if (rawOpenBal.isFinite()) rawOpenBal else 0.0
                     val stmtDay = c.getIntOrNull("statementDay")?.takeIf { it in 1..31 }
@@ -253,6 +303,12 @@ object SqliteBackupManager {
                     val incNw = c.getIntOrDefault("includeInNetWorth", 1) == 1
                     val order = c.getIntOrDefault("sortOrder", 0)
                     val isArchived = c.getIntOrDefault("isArchived", 0) == 1
+                    val accountNumber = c.getStringOrNull("accountNumber")?.takeIf { it.isNotBlank() }
+                    val rawInstitutionUid = c.getStringOrNull("institutionUid")?.takeIf { it.isNotBlank() }
+                    val institutionUid = rawInstitutionUid?.takeIf { it in validInstitutionUids }
+                    val cardNetwork = c.getStringOrNull("cardNetwork")?.let { rawNet ->
+                        try { CardNetwork.valueOf(rawNet) } catch (_: Exception) { null }
+                    }
 
                     if (accountTypes.none { it.uid == accountTypeUid }) {
                         val fallbackDefault = AccountTypeDefaults.defaultEntities().firstOrNull { it.uid == accountTypeUid }
@@ -284,7 +340,10 @@ object SqliteBackupManager {
                             includeInNetWorth = incNw,
                             sortOrder = order,
                             isArchived = isArchived,
-                            accountTypeUid = accountTypeUid
+                            accountTypeUid = accountTypeUid,
+                            accountNumber = accountNumber,
+                            institutionUid = institutionUid,
+                            cardNetwork = if (accountType == AccountType.CREDIT_CARD) cardNetwork else null
                         )
                     )
                 }
@@ -326,6 +385,7 @@ object SqliteBackupManager {
         }
 
         // 5. Transactions
+        val validAccountUids = accounts.map { it.uid }.toSet()
         val transactions = mutableListOf<TransactionEntity>()
         if (hasTable(db, "transactions")) {
             db.rawQuery("SELECT * FROM transactions", null).use { c ->
@@ -339,17 +399,21 @@ object SqliteBackupManager {
                     val baseAmt = if (rawBaseAmt.isFinite()) rawBaseAmt else accAmt
                     val rawRate = c.getDoubleOrDefault("exchangeRate", 1.0)
                     val rate = if (rawRate > 0.0 && rawRate.isFinite()) rawRate else 1.0
-                    val currUid = c.getStringOrDefault("currencyUid", "CURRENCY_INR")
+                    val rawCurrUid = c.getStringOrDefault("currencyUid", fallbackCurrencyUid)
+                    val currUid = if (rawCurrUid in validCurrencyUids) rawCurrUid else fallbackCurrencyUid
                     val accUid = c.getStringOrDefault("accountUid", "")
-                    val toAccUid = c.getStringOrNull("toAccountUid")
-                    val toAccAmt = c.getDoubleOrNull("toAccountAmount")?.takeIf { it.isFinite() }
-                    val catUid = c.getStringOrNull("categoryUid")
+                    val rawToAccUid = c.getStringOrNull("toAccountUid")
+                    val toAccUid = if (type == TransactionType.TRANSFER) rawToAccUid?.takeIf { it in validAccountUids } else null
+                    val rawToAccAmt = c.getDoubleOrNull("toAccountAmount")?.takeIf { it.isFinite() }
+                    val toAccAmt = if (type == TransactionType.TRANSFER) rawToAccAmt else null
+                    val rawCatUid = c.getStringOrNull("categoryUid")
+                    val catUid = if (type == TransactionType.TRANSFER || type == TransactionType.ADJUSTMENT) null else rawCatUid
                     val note = c.getStringOrDefault("note", "")
                     val desc = c.getStringOrDefault("description", "")
                     val timestamp = c.getLongOrDefault("timestamp", System.currentTimeMillis())
                     val isDeleted = c.getIntOrDefault("isDeleted", 0) == 1
 
-                    if (accUid.isNotEmpty()) {
+                    if (accUid.isNotEmpty() && accUid in validAccountUids && (type != TransactionType.TRANSFER || (toAccUid != null && toAccUid != accUid))) {
                         transactions.add(
                             TransactionEntity(
                                 uid = uid,
@@ -374,13 +438,17 @@ object SqliteBackupManager {
         }
 
         // 6. Transaction Tags CrossRef
+        val validTxUids = transactions.map { it.uid }.toSet()
+        val validTagUids = tags.map { it.uid }.toSet()
         val crossRefs = mutableListOf<TransactionTagCrossRef>()
         if (hasTable(db, "transaction_tags")) {
             db.rawQuery("SELECT * FROM transaction_tags", null).use { c ->
                 while (c.moveToNext()) {
                     val txUid = c.getStringOrNull("transactionUid")
                     val tagUid = c.getStringOrNull("tagUid")
-                    if (!txUid.isNullOrEmpty() && !tagUid.isNullOrEmpty()) {
+                    if (!txUid.isNullOrEmpty() && !tagUid.isNullOrEmpty() &&
+                        txUid in validTxUids && tagUid in validTagUids
+                    ) {
                         crossRefs.add(TransactionTagCrossRef(txUid, tagUid))
                     }
                 }
@@ -395,7 +463,8 @@ object SqliteBackupManager {
             transactions = transactions,
             tags = tags,
             tagCrossRefs = crossRefs,
-            accountTypes = accountTypes
+            accountTypes = accountTypes,
+            institutions = institutions
         )
 
         return BackupRestoreResult(
@@ -441,7 +510,18 @@ object SqliteBackupManager {
             }
         }
 
-        if (currencies.none { it.isMainCurrency } && currencies.isNotEmpty()) {
+        if (currencies.isEmpty()) {
+            currencies.add(
+                CurrencyEntity(
+                    uid = "CURRENCY_INR",
+                    name = "INR - India (₹)",
+                    isoCode = "INR",
+                    symbol = "₹",
+                    rateToBase = 1.0,
+                    isMainCurrency = true
+                )
+            )
+        } else if (currencies.none { it.isMainCurrency }) {
             val inrOrFirst = currencies.firstOrNull { it.isoCode.equals("INR", ignoreCase = true) } ?: currencies.first()
             val updated = inrOrFirst.copy(isMainCurrency = true, rateToBase = 1.0)
             currencies.remove(inrOrFirst)
@@ -515,8 +595,8 @@ object SqliteBackupManager {
                             openingBalance = 0.0,
                             statementDay = if (accountType == AccountType.CREDIT_CARD) cardDayFin else null,
                             paymentDueDay = if (accountType == AccountType.CREDIT_CARD) cardDayPay else null,
-                            settlementAccountUid = cardAssetUid,
-                            linkedParentAccountUid = cardAssetUid,
+                            settlementAccountUid = if (accountType == AccountType.CREDIT_CARD) cardAssetUid else null,
+                            linkedParentAccountUid = if (accountType != AccountType.CREDIT_CARD) cardAssetUid else null,
                             includeInNetWorth = !isHiddenOrClosed,
                             isArchived = isHiddenOrClosed,
                             sortOrder = order,
@@ -569,6 +649,7 @@ object SqliteBackupManager {
         }
 
         // Transactions
+        val validAccountUids = accounts.map { it.uid }.toSet()
         val transactions = mutableListOf<TransactionEntity>()
         val processedTransferLinks = mutableSetOf<String>()
 
@@ -603,6 +684,7 @@ object SqliteBackupManager {
 
                             val fromUid = if (doType == "3") assetUid else (toAssetUid ?: assetUid)
                             val toUid = if (doType == "3") (toAssetUid ?: assetUid) else assetUid
+                            if (fromUid !in validAccountUids || toUid !in validAccountUids || fromUid == toUid) continue
 
                             transactions.add(
                                 TransactionEntity(
@@ -615,7 +697,7 @@ object SqliteBackupManager {
                                     accountUid = fromUid,
                                     toAccountUid = toUid,
                                     toAccountAmount = amountAccount,
-                                    categoryUid = ctgUid,
+                                    categoryUid = null,
                                     note = note,
                                     description = description,
                                     timestamp = zdate
@@ -623,6 +705,7 @@ object SqliteBackupManager {
                             )
                         }
                         "0" -> {
+                            if (assetUid !in validAccountUids) continue
                             transactions.add(
                                 TransactionEntity(
                                     uid = uid,
@@ -640,6 +723,7 @@ object SqliteBackupManager {
                             )
                         }
                         "7", "8" -> {
+                            if (assetUid !in validAccountUids) continue
                             val diff = if (doType == "8") -amountAccount else amountAccount
                             val baseDiff = if (doType == "8") -zmoney else zmoney
                             transactions.add(
@@ -651,7 +735,7 @@ object SqliteBackupManager {
                                     exchangeRate = 1.0,
                                     currencyUid = targetCurrUid,
                                     accountUid = assetUid,
-                                    categoryUid = ctgUid,
+                                    categoryUid = null,
                                     note = if (note.isEmpty()) "Balance Adjustment" else note,
                                     description = description,
                                     timestamp = zdate
@@ -659,6 +743,7 @@ object SqliteBackupManager {
                             )
                         }
                         else -> {
+                            if (assetUid !in validAccountUids) continue
                             transactions.add(
                                 TransactionEntity(
                                     uid = uid,

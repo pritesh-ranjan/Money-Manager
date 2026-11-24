@@ -6,9 +6,11 @@ import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.CategoryType
 import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
+import com.moneymanager.app.data.local.entity.requiredInstitutionKind
 import com.moneymanager.app.data.local.entity.resolvedIsLiability
 
 object DomainValidator {
@@ -17,7 +19,8 @@ object DomainValidator {
         transaction: TransactionEntity,
         sourceAccount: AccountEntity?,
         destAccount: AccountEntity? = null,
-        category: CategoryEntity? = null
+        category: CategoryEntity? = null,
+        existingTransaction: TransactionEntity? = null
     ) {
         require(transaction.uid.isNotBlank()) { "Transaction UID cannot be blank" }
         require(sourceAccount != null) { "Source account does not exist" }
@@ -35,7 +38,11 @@ object DomainValidator {
                     "Destination account is only applicable for transfers"
                 }
                 if (category != null) {
-                    require(!category.isDeleted) { "Cannot assign a deleted category" }
+                    val isUnchangedExistingCategory =
+                        existingTransaction != null && existingTransaction.categoryUid == category.uid
+                    if (!isUnchangedExistingCategory) {
+                        require(!category.isDeleted) { "Cannot assign a deleted category" }
+                    }
                     val expectedCategoryType = if (transaction.type == TransactionType.EXPENSE) {
                         CategoryType.EXPENSE
                     } else {
@@ -105,11 +112,29 @@ object DomainValidator {
         }
     }
 
+    fun validateInstitution(
+        institution: InstitutionEntity,
+        existingInstitutions: List<InstitutionEntity>
+    ) {
+        val trimmedName = institution.name.trim()
+        require(institution.uid.isNotBlank()) { "Institution UID cannot be blank" }
+        require(trimmedName.isNotEmpty()) { "${institution.kind.displayName} name cannot be empty" }
+
+        val duplicate = existingInstitutions.any {
+            it.uid != institution.uid &&
+                !it.isDeleted &&
+                it.kind == institution.kind &&
+                it.name.trim().equals(trimmedName, ignoreCase = true)
+        }
+        require(!duplicate) { "A ${institution.kind.displayName.lowercase()} named '$trimmedName' already exists" }
+    }
+
     fun validateAccount(
         account: AccountEntity,
         existingAccounts: List<AccountEntity>,
         currencyExists: Boolean,
-        accountTypesMap: Map<String, AccountTypeEntity> = emptyMap()
+        accountTypesMap: Map<String, AccountTypeEntity> = emptyMap(),
+        institutionsMap: Map<String, InstitutionEntity> = emptyMap()
     ) {
         val trimmedName = account.name.trim()
         require(trimmedName.isNotEmpty()) { "Account name cannot be empty" }
@@ -133,19 +158,31 @@ object DomainValidator {
             account.creditLimit?.let {
                 require(it.isFinite() && it >= 0.0) { "Credit limit must be non-negative (got $it)" }
             }
-            account.settlementAccountUid?.let { settlementUid ->
+            account.settlementAccountUid?.takeIf { it.isNotBlank() }?.let { settlementUid ->
                 require(settlementUid != account.uid) { "Credit card cannot settle from itself" }
                 val settlementAcc = existingAccounts.firstOrNull { it.uid == settlementUid }
-                settlementAcc?.let {
-                    require(!it.resolvedIsLiability(accountTypesMap)) {
-                        "Settlement account cannot be a liability (got ${it.accountType})"
-                    }
+                require(settlementAcc != null && !settlementAcc.isArchived) {
+                    "Settlement account does not exist or is archived"
+                }
+                require(!settlementAcc.resolvedIsLiability(accountTypesMap)) {
+                    "Settlement account cannot be a liability (got ${settlementAcc.accountType})"
                 }
             }
         }
 
         account.linkedParentAccountUid?.let { parentUid ->
             require(parentUid != account.uid) { "Account cannot link to itself as parent" }
+        }
+
+        account.institutionUid?.takeIf { it.isNotBlank() }?.let { instUid ->
+            val institution = institutionsMap[instUid]
+            val expectedKind = account.accountType.requiredInstitutionKind()
+            require(institution != null && !institution.isDeleted) {
+                "Selected ${expectedKind.displayName.lowercase()} does not exist"
+            }
+            require(institution.kind == expectedKind) {
+                "${account.accountType.displayName} accounts require a ${expectedKind.displayName.lowercase()}, not a ${institution.kind.displayName.lowercase()}"
+            }
         }
     }
 

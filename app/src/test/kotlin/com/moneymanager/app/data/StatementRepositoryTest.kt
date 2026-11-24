@@ -95,14 +95,34 @@ class StatementRepositoryTest {
         assertEquals(10249.48, airtelSummary.totalDebits, 0.01)
         assertEquals(13669.49, airtelSummary.totalCredits, 0.01)
         assertEquals(10009.48, airtelSummary.statementTotalDue, 0.01)
-        assertTrue(airtelSummary.isReconciled)
+        assertFalse(airtelSummary.isReconciled)
 
         val horizonSummary = summaries.first { it.statementId == "418688******8158_2026-10" }
         assertEquals(21, horizonSummary.transactionCount)
         assertEquals(25338.35, horizonSummary.totalDebits, 0.01)
         assertEquals(19013.31, horizonSummary.totalCredits, 0.01)
         assertEquals(25338.35, horizonSummary.statementTotalDue, 0.01)
-        assertTrue(horizonSummary.isReconciled)
+        assertFalse(horizonSummary.isReconciled)
+    }
+
+    @Test
+    fun testMarkStatementPaidAndReimportPreservesPaidStatus() = runBlocking {
+        val stream1 = javaClass.getResourceAsStream("/fixtures/axis_airtel_golden.pdf")!!
+        val parsed = stream1.use { AxisBankCreditCardParser().parse(it) }
+        val stmtId = repository.importStatement(parsed)
+
+        // Newly imported statement with > 0 due starts unpaid
+        assertFalse(repository.getStatementSummariesRaw().first { it.statementId == stmtId }.isReconciled)
+
+        // Mark paid
+        repository.setStatementPaidStatus(stmtId, isPaid = true)
+        assertTrue(repository.getStatementSummariesRaw().first { it.statementId == stmtId }.isReconciled)
+
+        // Re-importing the same statement preserves paid status
+        val stream2 = javaClass.getResourceAsStream("/fixtures/axis_airtel_golden.pdf")!!
+        val parsedAgain = stream2.use { AxisBankCreditCardParser().parse(it) }
+        repository.importStatement(parsedAgain)
+        assertTrue(repository.getStatementSummariesRaw().first { it.statementId == stmtId }.isReconciled)
     }
 
     @Test

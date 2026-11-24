@@ -15,8 +15,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ShowChart
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.RequestQuote
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,6 +54,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.moneymanager.app.ui.theme.OneUiTheme
 import com.moneymanager.app.ui.theme.StatsPieColors
+import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CategoryEntity
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
@@ -1074,6 +1085,22 @@ fun OneUiChunkySlider(
     activeColor: Color = OneUiTheme.colors.primaryAccent
 ) = OneUiSlider(value, onValueChange, modifier, valueRange, activeColor)
 
+@Composable
+fun accountTypeVisuals(baseType: AccountType): Pair<ImageVector, Color> {
+    return when (baseType) {
+        AccountType.CASH -> Icons.Default.Payments to OneUiTheme.colors.badgeGreen
+        AccountType.SAVINGS -> Icons.Default.AccountBalance to OneUiTheme.colors.badgeBlue
+        AccountType.WALLET -> Icons.Default.AccountBalanceWallet to OneUiTheme.colors.badgeTeal
+        AccountType.CREDIT_CARD -> Icons.Default.CreditCard to OneUiTheme.colors.badgeIndigo
+        AccountType.INVESTMENT -> Icons.Default.Savings to OneUiTheme.colors.badgeOrange
+        AccountType.EQUITY -> Icons.AutoMirrored.Filled.ShowChart to OneUiTheme.colors.badgePurple
+        AccountType.MUTUAL_FUNDS -> Icons.AutoMirrored.Filled.TrendingUp to OneUiTheme.colors.badgePurple
+        AccountType.UPI_DEBIT -> Icons.Default.QrCode2 to OneUiTheme.colors.badgeBlue
+        AccountType.LOAN -> Icons.Default.RequestQuote to OneUiTheme.colors.expense
+        AccountType.OTHER -> Icons.Default.Category to OneUiTheme.colors.badgeTeal
+    }
+}
+
 /**
  * Borderless Bottom-Aligned One UI 9 Dialog (28.dp rounded corners).
  */
@@ -1085,6 +1112,8 @@ fun OneUiBottomDialog(
     onConfirm: () -> Unit,
     dismissButtonText: String = "Cancel",
     confirmButtonColor: Color = OneUiTheme.colors.primaryAccent,
+    showConfirmButton: Boolean = true,
+    headerNavigationIcon: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Dialog(
@@ -1101,6 +1130,7 @@ fun OneUiBottomDialog(
                     onClick = onDismissRequest
                 )
                 .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             contentAlignment = Alignment.BottomCenter
         ) {
@@ -1126,14 +1156,25 @@ fun OneUiBottomDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.SemiBold,
-                                color = OneUiTheme.colors.textPrimary,
-                                fontSize = 19.sp
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (headerNavigationIcon != null) {
+                                headerNavigationIcon()
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = OneUiTheme.colors.textPrimary,
+                                    fontSize = 19.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        )
+                        }
                         IconButton(
                             onClick = onDismissRequest,
                             modifier = Modifier.size(32.dp)
@@ -1179,24 +1220,26 @@ fun OneUiBottomDialog(
                             }
                         }
 
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp)
-                                .clip(CircleShape)
-                                .clickable(onClick = onConfirm),
-                            shape = CircleShape,
-                            color = confirmButtonColor
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = confirmButtonText,
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        color = Color.White,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.5.sp
+                        if (showConfirmButton) {
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .clip(CircleShape)
+                                    .clickable(onClick = onConfirm),
+                                shape = CircleShape,
+                                color = confirmButtonColor
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = confirmButtonText,
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            color = Color.White,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.5.sp
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     }
@@ -1215,7 +1258,8 @@ fun OneUiBottomDialog(
 fun OneUiDayHeader(
     date: LocalDate,
     dayIncome: Double,
-    dayExpense: Double
+    dayExpense: Double,
+    currencySymbol: String = "₹"
 ) {
     val dayOfWeek = date.dayOfWeek
     val dayLetter = dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
@@ -1273,7 +1317,7 @@ fun OneUiDayHeader(
 
         if (dayIncome > 0) {
             Text(
-                text = "+₹" + CurrencyFormatter.formatIndianNumber(dayIncome),
+                text = "+$currencySymbol" + CurrencyFormatter.formatIndianNumber(dayIncome),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = FontWeight.Medium,
                     color = OneUiTheme.colors.income,
@@ -1285,7 +1329,7 @@ fun OneUiDayHeader(
 
         if (dayExpense > 0) {
             Text(
-                text = "-₹" + CurrencyFormatter.formatIndianNumber(dayExpense),
+                text = "-$currencySymbol" + CurrencyFormatter.formatIndianNumber(dayExpense),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = FontWeight.Medium,
                     color = OneUiTheme.colors.expense,
@@ -1308,6 +1352,8 @@ fun OneUiTransactionRowItem(
     categoriesMap: Map<String, CategoryEntity> = emptyMap(),
     colorIndex: Int = 0,
     showDate: Boolean = false,
+    focusAccountUid: String? = null,
+    focusCurrencySymbol: String? = null,
     onClick: () -> Unit
 ) {
     val tx = item.transaction
@@ -1345,7 +1391,8 @@ fun OneUiTransactionRowItem(
     val prefix = when (tx.type) {
         TransactionType.INCOME -> "+₹"
         TransactionType.EXPENSE -> "-₹"
-        else -> "₹"
+        TransactionType.ADJUSTMENT -> if (tx.baseAmount >= 0.0) "+₹" else "-₹"
+        TransactionType.TRANSFER -> "₹"
     }
 
     val displayTitle = when {
@@ -1476,9 +1523,23 @@ fun OneUiTransactionRowItem(
                     fontSize = 14.sp
                 )
             )
-            if (!item.currency.isMainCurrency) {
+            val secondaryNativeText = when {
+                tx.type == TransactionType.TRANSFER &&
+                    focusAccountUid != null &&
+                    item.toAccount?.uid == focusAccountUid &&
+                    focusCurrencySymbol != null &&
+                    tx.toAccountAmount != null &&
+                    item.toAccount.currencyUid != item.account.currencyUid -> {
+                    "$focusCurrencySymbol ${CurrencyFormatter.formatIndianNumber(abs(tx.toAccountAmount))}"
+                }
+                !item.currency.isMainCurrency -> {
+                    "${item.currency.symbol} ${CurrencyFormatter.formatIndianNumber(abs(tx.accountAmount))}"
+                }
+                else -> null
+            }
+            if (secondaryNativeText != null) {
                 Text(
-                    text = "${item.currency.symbol} ${CurrencyFormatter.formatIndianNumber(abs(tx.accountAmount))}",
+                    text = secondaryNativeText,
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = OneUiTheme.colors.textMuted,
                         fontSize = 10.5.sp

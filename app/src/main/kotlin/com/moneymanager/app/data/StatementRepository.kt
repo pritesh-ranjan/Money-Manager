@@ -17,11 +17,17 @@ class StatementRepository(
      * Returns the unique statementId.
      */
     suspend fun importStatement(result: StatementParseResult): String {
-        val entities = StatementEntityMapper.toEntities(result)
-        if (entities.isEmpty()) {
+        val preliminary = StatementEntityMapper.toEntities(result)
+        if (preliminary.isEmpty()) {
             return ""
         }
-        val statementId = entities.first().statementId
+        val statementId = preliminary.first().statementId
+        val existingPaid = statementDao.getTransactionsByStatementIdRaw(statementId).firstOrNull()?.isReconciled == true
+        val entities = if (existingPaid) {
+            preliminary.map { it.copy(isReconciled = true) }
+        } else {
+            preliminary
+        }
         statementDao.replaceStatement(statementId, entities)
         return statementId
     }

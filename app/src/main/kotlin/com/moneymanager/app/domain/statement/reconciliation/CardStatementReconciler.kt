@@ -1,5 +1,6 @@
 package com.moneymanager.app.domain.statement.reconciliation
 
+import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
 import com.moneymanager.app.data.local.entity.TransactionType
@@ -55,7 +56,8 @@ object CardStatementReconciler {
         statementTransactions: List<CardStatementTransactionEntity>,
         manualTransactions: List<TransactionWithDetails>,
         periodStartEpochDay: Long? = null,
-        periodEndEpochDay: Long? = null
+        periodEndEpochDay: Long? = null,
+        cardAccountUid: String? = null
     ): StatementReconciliationReport {
         // Filter candidate manual transactions around the billing period (with settlement delay buffer)
         val candidateManualTxs = manualTransactions.filter { tx ->
@@ -74,10 +76,10 @@ object CardStatementReconciler {
         val statementDebits = statementTransactions.filter { !it.isCredit }
         val statementCredits = statementTransactions.filter { it.isCredit }
 
-        // Bipartite greedy matching for debits (expenses)
+        // Bipartite greedy matching for debits (expenses or outgoing card transfers)
         for (stmtTx in statementDebits) {
             val matchIndex = candidateManualTxs.indexOfFirst { manual ->
-                manual.transaction.type == TransactionType.EXPENSE &&
+                isManualDebitOnCard(manual, cardAccountUid) &&
                     abs(manual.transaction.amount - stmtTx.amount) < AMOUNT_TOLERANCE &&
                     abs(manual.transaction.dateEpochDay - stmtTx.transactionDateEpochDay) <= DATE_TOLERANCE_DAYS
             }
@@ -90,11 +92,11 @@ object CardStatementReconciler {
             }
         }
 
-        // Bipartite greedy matching for credits (refunds, cashbacks, payments)
+        // Bipartite greedy matching for credits (refunds, cashbacks, incoming bill-payment transfers)
         for (stmtTx in statementCredits) {
             val matchIndex = candidateManualTxs.indexOfFirst { manual ->
-                (manual.transaction.type == TransactionType.INCOME || manual.transaction.type == TransactionType.TRANSFER) &&
-                    abs(manual.transaction.amount - stmtTx.amount) < AMOUNT_TOLERANCE &&
+                isManualCreditOnCard(manual, cardAccountUid) &&
+                    abs(manualCreditAmountOnCard(manual) - stmtTx.amount) < AMOUNT_TOLERANCE &&
                     abs(manual.transaction.dateEpochDay - stmtTx.transactionDateEpochDay) <= DATE_TOLERANCE_DAYS
             }
 
@@ -120,14 +122,14 @@ object CardStatementReconciler {
         val stmtTotalCredits = statementCredits.sumOf { it.amount }.round2Decimals()
 
         val manualDebits = manualTransactions.filter {
-            it.transaction.type == TransactionType.EXPENSE &&
+            isManualDebitOnCard(it, cardAccountUid) &&
                 (periodStartEpochDay == null || it.transaction.dateEpochDay in periodStartEpochDay..periodEndEpochDay!!)
         }.sumOf { it.transaction.amount }.round2Decimals()
 
         val manualCredits = manualTransactions.filter {
-            (it.transaction.type == TransactionType.INCOME || it.transaction.type == TransactionType.TRANSFER) &&
+            isManualCreditOnCard(it, cardAccountUid) &&
                 (periodStartEpochDay == null || it.transaction.dateEpochDay in periodStartEpochDay..periodEndEpochDay!!)
-        }.sumOf { it.transaction.amount }.round2Decimals()
+        }.sumOf { manualCreditAmountOnCard(it) }.round2Decimals()
 
         val variance = (stmtTotalDebits - manualDebits).round2Decimals()
         val isFullyReconciled = unrecordedStatementTxs.isEmpty() &&
@@ -149,6 +151,37 @@ object CardStatementReconciler {
             unrecordedStatementTransactions = unrecordedStatementTxs,
             unmatchedManualTransactions = unmatchedManualTxs
         )
+    }
+
+    private fun isManualDebitOnCard(manual: TransactionWithDetails, cardAccountUid: String?): Boolean {
+        return when (manual.transaction.type) {
+            TransactionType.EXPENSE -> cardAccountUid == null || manual.account.uid == cardAccountUid
+            TransactionType.TRANSFER -> {
+                (cardAccountUid != null && manual.account.uid == cardAccountUid) ||
+                    (cardAccountUid == null && manual.account.accountType == AccountType.CREDIT_CARD &&
+                        manual.toAccount?.accountType != AccountType.CREDIT_CARD)
+            }
+            else -> false
+        }
+    }
+
+    private fun isManualCreditOnCard(manual: TransactionWithDetails, cardAccountUid: String?): Boolean {
+        return when (manual.transaction.type) {
+            TransactionType.INCOME -> cardAccountUid == null || manual.account.uid == cardAccountUid
+            TransactionType.TRANSFER -> {
+                (cardAccountUid != null && manual.toAccount?.uid == cardAccountUid) ||
+                    (cardAccountUid == null && manual.toAccount?.accountType == AccountType.CREDIT_CARD)
+            }
+            else -> false
+        }
+    }
+
+    private fun manualCreditAmountOnCard(manual: TransactionWithDetails): Double {
+        return if (manual.transaction.type == TransactionType.TRANSFER) {
+            manual.transaction.toAccountAmount ?: manual.transaction.accountAmount
+        } else {
+            manual.transaction.accountAmount
+        }
     }
 
     private fun Double.round2Decimals(): Double {

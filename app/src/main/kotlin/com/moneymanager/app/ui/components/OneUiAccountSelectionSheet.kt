@@ -35,8 +35,10 @@ import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.AccountTypeEntity
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
+import com.moneymanager.app.data.local.entity.InstitutionEntity
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.data.local.entity.resolvedAccountTypeUid
+import com.moneymanager.app.data.local.entity.resolvedInstitutionName
 import com.moneymanager.app.ui.theme.OneUiTheme
 import java.util.Locale
 
@@ -48,6 +50,7 @@ fun OneUiAccountSelectionDialog(
     selectedUid: String = "",
     allTransactions: List<TransactionWithDetails> = emptyList(),
     accountTypesMap: Map<String, AccountTypeEntity> = emptyMap(),
+    institutionsMap: Map<String, InstitutionEntity> = emptyMap(),
     typeColor: Color = OneUiTheme.colors.primaryAccent,
     initialFilter: String = "All",
     allowedAccountTypes: Set<AccountType>? = null,
@@ -71,6 +74,7 @@ fun OneUiAccountSelectionDialog(
             selectedUid = selectedUid,
             allTransactions = allTransactions,
             accountTypesMap = accountTypesMap,
+            institutionsMap = institutionsMap,
             typeColor = typeColor,
             initialFilter = initialFilter,
             allowedAccountTypes = allowedAccountTypes,
@@ -90,6 +94,7 @@ fun OneUiAccountSelectionSheet(
     selectedUid: String,
     allTransactions: List<TransactionWithDetails> = emptyList(),
     accountTypesMap: Map<String, AccountTypeEntity> = emptyMap(),
+    institutionsMap: Map<String, InstitutionEntity> = emptyMap(),
     typeColor: Color = OneUiTheme.colors.primaryAccent,
     initialFilter: String = "All",
     allowedAccountTypes: Set<AccountType>? = null,
@@ -123,7 +128,7 @@ fun OneUiAccountSelectionSheet(
         }
     }
 
-    val filteredAccounts = remember(accounts, selectedFilter, searchQuery) {
+    val filteredAccounts = remember(accounts, selectedFilter, searchQuery, institutionsMap) {
         accounts.filter { acc ->
             val matchesFilter = when (selectedFilter) {
                 "All" -> true
@@ -135,7 +140,11 @@ fun OneUiAccountSelectionSheet(
                 "Other" -> acc.account.accountType in listOf(AccountType.LOAN, AccountType.OTHER)
                 else -> true
             }
-            val matchesSearch = searchQuery.isBlank() || acc.account.name.contains(searchQuery, ignoreCase = true)
+            val instName = acc.account.resolvedInstitutionName(institutionsMap)
+            val matchesSearch = searchQuery.isBlank() ||
+                acc.account.name.contains(searchQuery, ignoreCase = true) ||
+                (acc.account.accountNumber?.contains(searchQuery, ignoreCase = true) == true) ||
+                (instName?.contains(searchQuery, ignoreCase = true) == true)
             matchesFilter && matchesSearch
         }
     }
@@ -350,7 +359,7 @@ fun OneUiAccountSelectionSheet(
 
                 items(recentAccounts, key = { "recent_${it.account.uid}" }) { accWithCurr ->
                     val isAllowed = allowedAccountTypes == null || accWithCurr.account.accountType in allowedAccountTypes
-                    val (cleanName, baseSubtitle) = getAccountDisplayInfo(accWithCurr.account, accountTypesMap)
+                    val (cleanName, baseSubtitle) = getAccountDisplayInfo(accWithCurr.account, accountTypesMap, institutionsMap)
                     val subtitle = if (!isAllowed) "$baseSubtitle • Disabled" else baseSubtitle
                     val isSelected = accWithCurr.account.uid == selectedUid
 
@@ -436,7 +445,7 @@ fun OneUiAccountSelectionSheet(
             } else {
                 items(filteredAccounts, key = { it.account.uid }) { accWithCurr ->
                     val isAllowed = allowedAccountTypes == null || accWithCurr.account.accountType in allowedAccountTypes
-                    val (cleanName, baseSubtitle) = getAccountDisplayInfo(accWithCurr.account, accountTypesMap)
+                    val (cleanName, baseSubtitle) = getAccountDisplayInfo(accWithCurr.account, accountTypesMap, institutionsMap)
                     val subtitle = if (!isAllowed) "$baseSubtitle • Disabled" else baseSubtitle
                     val isSelected = accWithCurr.account.uid == selectedUid
 
@@ -584,8 +593,22 @@ fun OneUiAccountTypeIcon(
 
 fun getAccountDisplayInfo(
     account: AccountEntity,
-    accountTypesMap: Map<String, AccountTypeEntity> = emptyMap()
+    accountTypesMap: Map<String, AccountTypeEntity> = emptyMap(),
+    institutionsMap: Map<String, InstitutionEntity> = emptyMap()
 ): Pair<String, String> {
+    val instName = account.resolvedInstitutionName(institutionsMap)
+    val maskedNum = account.accountNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+        if (raw.length > 4) "•••• ${raw.takeLast(4)}" else "•••• $raw"
+    }
+    val structuredParts = buildList {
+        if (!instName.isNullOrBlank()) add(instName)
+        account.cardNetwork?.let { add(it.displayName) }
+        if (maskedNum != null) add(maskedNum)
+    }
+    if (structuredParts.isNotEmpty()) {
+        return Pair(account.name, structuredParts.joinToString(" • "))
+    }
+
     val fourDigitsRegex = Regex("^(.*?)[\\s\\-–—\\(]*[•\\*xX]*(\\d{4})\\)?$")
     val match = fourDigitsRegex.find(account.name.trim())
     return if (match != null && match.groupValues[1].isNotBlank()) {

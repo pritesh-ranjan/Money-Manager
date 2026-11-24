@@ -22,6 +22,7 @@ import com.moneymanager.app.data.local.entity.GmailImportHistoryEntity
 import com.moneymanager.app.data.local.entity.GmailSyncStateEntity
 import com.moneymanager.app.data.local.entity.InsightEntity
 import com.moneymanager.app.data.local.entity.InsightTransactionCrossRef
+import com.moneymanager.app.data.local.entity.InstitutionEntity
 import com.moneymanager.app.data.local.entity.RecurrenceDecisionEntity
 import com.moneymanager.app.data.local.entity.TagEntity
 import com.moneymanager.app.data.local.entity.TransactionEntity
@@ -35,6 +36,7 @@ import java.util.UUID
     entities = [
         CurrencyEntity::class,
         AccountTypeEntity::class,
+        InstitutionEntity::class,
         AccountEntity::class,
         CategoryEntity::class,
         TagEntity::class,
@@ -47,7 +49,7 @@ import java.util.UUID
         GmailImportHistoryEntity::class,
         GmailSyncStateEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -73,7 +75,8 @@ abstract class AppDatabase : RoomDatabase() {
                         Migrations.MIGRATION_1_2,
                         Migrations.MIGRATION_2_3,
                         Migrations.MIGRATION_3_4,
-                        Migrations.MIGRATION_4_5
+                        Migrations.MIGRATION_4_5,
+                        Migrations.MIGRATION_5_6
                     )
                     .addCallback(DatabaseCallback(scope))
                     .build()

@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.AccountWithCurrency
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
+import com.moneymanager.app.data.local.entity.InstitutionEntity
 import com.moneymanager.app.domain.cards.CreditCardMappingStorage
 import com.moneymanager.app.ui.components.*
 import com.moneymanager.app.ui.main.MainViewModel
@@ -48,9 +49,10 @@ fun CardMappingDialog(
     viewModel: MainViewModel,
     statements: List<CardStatementSummaryRecord>,
     allAccounts: List<AccountWithCurrency>,
+    institutionsMap: Map<String, InstitutionEntity> = emptyMap(),
     initialSelectedCardKey: String? = null,
     onDismiss: () -> Unit,
-    onAddNewCardAccount: () -> Unit
+    onAddNewCardAccount: (SyncedCardItem) -> Unit
 ) {
     val context = LocalContext.current
     val cardMappings by viewModel.cardMappings.collectAsState()
@@ -256,6 +258,7 @@ fun CardMappingDialog(
             accounts = allAccounts,
             selectedUid = targetCard.mappedAccountUid ?: "",
             accountTypesMap = accountTypesMap,
+            institutionsMap = institutionsMap,
             typeColor = OneUiTheme.colors.primaryAccent,
             initialFilter = "Cards",
             allowedAccountTypes = setOf(AccountType.CREDIT_CARD),
@@ -270,9 +273,9 @@ fun CardMappingDialog(
                 }
                 cardToPickAccountFor = null
             },
-            onAddNewAccount = { defaultType ->
+            onAddNewAccount = { _ ->
                 cardToPickAccountFor = null
-                onAddNewCardAccount()
+                onAddNewCardAccount(targetCard)
             }
         )
     }

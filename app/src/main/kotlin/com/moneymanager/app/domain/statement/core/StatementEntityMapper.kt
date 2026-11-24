@@ -30,11 +30,11 @@ object StatementEntityMapper {
      */
     fun toEntities(
         result: StatementParseResult,
-        importedAt: Long = System.currentTimeMillis()
+        importedAt: Long = System.currentTimeMillis(),
+        isPaidOverride: Boolean? = null
     ): List<CardStatementTransactionEntity> {
         val meta = result.metadata
         val summary = result.summary
-        val recon = result.reconciliation
 
         val maskedCard = sanitizeCardMask(meta.accountOrCardNumberMasked)
         val statementYearMonth = meta.statementDate.format(yearMonthFormatter)
@@ -44,6 +44,8 @@ object StatementEntityMapper {
         val paymentDueDateEpoch = meta.paymentDueDate?.toEpochDay()
         val billingStartEpoch = meta.billingPeriodStart?.toEpochDay()
         val billingEndEpoch = meta.billingPeriodEnd?.toEpochDay()
+
+        val initialIsPaid = isPaidOverride ?: (summary.totalAmountDue <= 0.01)
 
         val reward = summary.rewardSummary
 
@@ -68,7 +70,7 @@ object StatementEntityMapper {
                 statementPaymentsOrCredits = summary.paymentsOrCredits,
                 statementTotalDue = summary.totalAmountDue,
                 statementMinDue = summary.minimumAmountDue,
-                isReconciled = recon.isReconciled,
+                isReconciled = initialIsPaid,
                 rewardType = reward?.rewardType?.name,
                 rewardEarned = reward?.earned,
                 rewardRedeemedOrCredited = reward?.redeemedOrTransferred,

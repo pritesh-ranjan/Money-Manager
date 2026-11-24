@@ -29,7 +29,7 @@ class StatementEntityMapperTest {
         assertEquals(507.00, first.statementMinDue!!, 0.01)
         assertEquals("LOYALTY_POINTS", first.rewardType)
         assertEquals(7686.0, first.rewardClosingBalance!!, 0.01)
-        assertTrue(first.isReconciled)
+        assertFalse("Newly mapped statement with balance due must start unpaid", first.isReconciled)
 
         // Line item check
         assertEquals("418688******8158_2026-10_1", first.uid)
@@ -58,7 +58,7 @@ class StatementEntityMapperTest {
         assertEquals("IN_STATEMENT_CASHBACK", first.rewardType)
         assertEquals(414.00, first.rewardEarned!!, 0.01)
         assertEquals(240.00, first.rewardRedeemedOrCredited!!, 0.01)
-        assertTrue(first.isReconciled)
+        assertFalse("Newly mapped statement with balance due must start unpaid", first.isReconciled)
     }
 
     @Test
@@ -77,7 +77,7 @@ class StatementEntityMapperTest {
         assertEquals(5177.00, first.statementTotalDue, 0.01)
         assertEquals("IN_STATEMENT_CASHBACK", first.rewardType)
         assertEquals(502.80, first.rewardEarned!!, 0.01)
-        assertTrue(first.isReconciled)
+        assertFalse("Newly mapped statement with balance due must start unpaid", first.isReconciled)
     }
 
     @Test
@@ -96,6 +96,6 @@ class StatementEntityMapperTest {
         assertEquals(20789.41, first.statementTotalDue, 0.01)
         assertEquals("EXTERNAL_WALLET_CASHBACK", first.rewardType)
         assertEquals(776.0, first.rewardEarned!!, 0.01)
-        assertTrue(first.isReconciled)
+        assertFalse("Newly mapped statement with balance due must start unpaid", first.isReconciled)
     }
 }

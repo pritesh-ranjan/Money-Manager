@@ -1,6 +1,11 @@
 package com.moneymanager.app.domain.cards
 
 import android.content.Context
+import com.moneymanager.app.data.local.entity.AccountEntity
+import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
+import com.moneymanager.app.data.local.entity.resolvedInstitutionName
 import org.json.JSONObject
 
 /**
@@ -112,5 +117,74 @@ object CreditCardMappingStorage {
             .edit()
             .putString(KEY_MAPPINGS_JSON, json)
             .apply()
+    }
+
+    fun extractLast4Digits(raw: String?): String? {
+        val digits = raw?.replace(Regex("[^0-9]"), "") ?: return null
+        return digits.takeLast(4).takeIf { it.length == 4 }
+    }
+
+    private fun bankNameMatches(candidateName: String?, statementBankName: String): Boolean {
+        val candidate = candidateName?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return false
+        val stmtLower = statementBankName.trim().lowercase()
+        if (stmtLower.isEmpty()) return false
+        if (candidate == stmtLower || stmtLower.contains(candidate) || candidate.contains(stmtLower)) return true
+        val stopWords = setOf("bank", "card", "credit", "ltd", "limited", "india", "the")
+        val stmtTokens = stmtLower.split(Regex("[^a-z0-9]+")).filter { it.length >= 3 && it !in stopWords }
+        val candTokens = candidate.split(Regex("[^a-z0-9]+")).filter { it.length >= 3 && it !in stopWords }
+        return stmtTokens.isNotEmpty() && candTokens.any { it in stmtTokens }
+    }
+
+    fun findMatchingBankInstitution(
+        statementBankName: String,
+        banks: List<InstitutionEntity>
+    ): InstitutionEntity? {
+        val cleanTarget = statementBankName.trim()
+        if (cleanTarget.isEmpty()) return null
+        val activeBanks = banks.filter { !it.isDeleted && it.kind == InstitutionKind.BANK }
+        return activeBanks.firstOrNull { it.name.trim().equals(cleanTarget, ignoreCase = true) }
+            ?: activeBanks.firstOrNull { bankNameMatches(it.name, cleanTarget) }
+    }
+
+    fun resolveCardAccount(
+        mappedAccountUid: String?,
+        statementBankName: String,
+        cardMasked: String,
+        accounts: List<AccountEntity>,
+        institutionsMap: Map<String, InstitutionEntity> = emptyMap()
+    ): AccountEntity? {
+        val activeCards = accounts.filter { !it.isArchived && it.accountType == AccountType.CREDIT_CARD }
+        if (activeCards.isEmpty()) return null
+
+        if (!mappedAccountUid.isNullOrBlank()) {
+            activeCards.firstOrNull { it.uid == mappedAccountUid }?.let { return it }
+        }
+
+        val stmtLast4 = extractLast4Digits(cardMasked)
+        fun matchesBankForAccount(acc: AccountEntity): Boolean {
+            val instName = acc.resolvedInstitutionName(institutionsMap)
+            return bankNameMatches(instName, statementBankName) || bankNameMatches(acc.name, statementBankName)
+        }
+
+        if (stmtLast4 != null) {
+            val numberMatches = activeCards.filter { extractLast4Digits(it.accountNumber) == stmtLast4 }
+            if (numberMatches.size == 1) return numberMatches.first()
+            if (numberMatches.size > 1) {
+                return numberMatches.firstOrNull { matchesBankForAccount(it) } ?: numberMatches.first()
+            }
+
+            val nameDigitMatches = activeCards.filter { it.name.contains(stmtLast4) }
+            if (nameDigitMatches.size == 1) return nameDigitMatches.first()
+            if (nameDigitMatches.size > 1) {
+                return nameDigitMatches.firstOrNull { matchesBankForAccount(it) } ?: nameDigitMatches.first()
+            }
+        }
+
+        val bankCandidates = activeCards.filter { acc ->
+            val accLast4 = extractLast4Digits(acc.accountNumber)
+            val hasConflictingDigits = stmtLast4 != null && accLast4 != null && accLast4 != stmtLast4
+            !hasConflictingDigits && matchesBankForAccount(acc)
+        }
+        return if (bankCandidates.size == 1) bankCandidates.first() else null
     }
 }

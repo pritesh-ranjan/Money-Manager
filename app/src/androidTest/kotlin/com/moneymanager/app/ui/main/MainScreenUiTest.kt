@@ -8,6 +8,15 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.moneymanager.app.data.local.AppDatabase
+import com.moneymanager.app.data.local.entity.AccountEntity
+import com.moneymanager.app.data.local.entity.AccountType
+import com.moneymanager.app.data.local.entity.AccountTypeDefaults
+import com.moneymanager.app.data.local.entity.CategoryEntity
+import com.moneymanager.app.data.local.entity.CategoryType
+import com.moneymanager.app.data.local.entity.CurrencyEntity
+import com.moneymanager.app.data.local.entity.InstitutionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.domain.insights.InsightPreferencesManager
 import com.moneymanager.app.domain.statement.core.StatementParserRegistry
@@ -15,6 +24,7 @@ import com.moneymanager.app.ui.theme.MoneyManagerTheme
 import com.moneymanager.app.ui.theme.ThemePreferenceManager
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -34,6 +44,53 @@ class MainScreenUiTest {
         PDFBoxResourceLoader.init(app)
         ThemePreferenceManager.init(app)
         InsightPreferencesManager.init(app)
+
+        val database = AppDatabase.getDatabase(app)
+        database.clearAllTables()
+        runBlocking {
+            val dao = database.moneyManagerDao()
+            dao.insertAccountTypes(AccountTypeDefaults.defaultEntities())
+            dao.insertInstitutions(
+                listOf(
+                    InstitutionEntity(
+                        uid = "INST_HDFC",
+                        name = "HDFC Bank",
+                        kind = InstitutionKind.BANK,
+                        sortOrder = 1
+                    )
+                )
+            )
+            dao.insertCurrencies(
+                listOf(
+                    CurrencyEntity(
+                        uid = "CURRENCY_INR",
+                        name = "INR - India (₹)",
+                        isoCode = "INR",
+                        symbol = "₹",
+                        rateToBase = 1.0,
+                        isMainCurrency = true
+                    )
+                )
+            )
+            dao.insertAccounts(
+                listOf(
+                    AccountEntity(
+                        uid = "ACC_SAVINGS",
+                        name = "Primary Savings Bank",
+                        accountType = AccountType.SAVINGS,
+                        currencyUid = "CURRENCY_INR",
+                        openingBalance = 0.0,
+                        sortOrder = 2,
+                        accountTypeUid = AccountType.SAVINGS.name
+                    )
+                )
+            )
+            dao.insertCategories(
+                listOf(
+                    CategoryEntity("CAT_FOOD", "Food & Dining", CategoryType.EXPENSE, null, "🍜", 1)
+                )
+            )
+        }
 
         composeTestRule.runOnUiThread {
             viewModel = ViewModelProvider(
@@ -97,15 +154,24 @@ class MainScreenUiTest {
         composeTestRule.onNodeWithText("Accounts").performClick()
         composeTestRule.waitForIdle()
 
-        // 2. Click Add Account
+        // 2. Click Add Account -> opens Account Type grid first
         composeTestRule.onNodeWithContentDescription("Add Account").performClick()
         composeTestRule.waitForIdle()
 
-        // 3. Verify Dialog opened
-        composeTestRule.onNodeWithText("New Account").assertIsDisplayed()
+        // 3. Verify Account Type Grid opened with Add Type tile at end, then select Bank / Savings
+        composeTestRule.onNodeWithText("Select Account Type").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Add Type").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Bank / Savings").performClick()
+        composeTestRule.waitForIdle()
 
-        // 4. Fill in Account Name and Opening Balance
+        // 4. Verify Form opened, select Bank, fill in Account Name, Account Number, and Opening Balance
+        composeTestRule.onNodeWithText("New Bank / Savings").assertIsDisplayed()
         composeTestRule.onNodeWithText("Account Name").performTextInput("HDFC Main Salary")
+        composeTestRule.onNodeWithText("Account Number (Optional)").performTextInput("9876")
+        composeTestRule.onNodeWithText("Bank").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("HDFC Bank").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("Opening Balance").performTextReplacement("65000.00")
 
         // 5. Click Create
@@ -117,6 +183,7 @@ class MainScreenUiTest {
             composeTestRule.onAllNodesWithText("HDFC Main Salary").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithText("HDFC Main Salary").assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("65,000.00", substring = true))[0].assertIsDisplayed()
         composeTestRule.onNodeWithText("Total net worth").assertIsDisplayed()
 
         // 7. Click on the created account to open Account Detail sub-screen with quick edit
@@ -170,6 +237,11 @@ class MainScreenUiTest {
         }
         composeTestRule.onNodeWithText("Edit transaction").assertIsDisplayed()
 
+        // Edit the note text to verify the update actually persists
+        composeTestRule.onNode(hasText("Team Dinner at Social") and hasSetTextAction())
+            .performTextReplacement("Team Dinner at Social Updated")
+        composeTestRule.waitForIdle()
+
         // Scroll the form to reveal the Update button
         composeTestRule.onAllNodes(hasScrollAction()).onLast().performScrollToNode(hasText("Update"))
         composeTestRule.waitForIdle()
@@ -178,11 +250,13 @@ class MainScreenUiTest {
         composeTestRule.onNodeWithText("Update").performClick()
         composeTestRule.waitForIdle()
 
-        // Verify sheet dismissed and transaction remains on dashboard
+        // Verify sheet dismissed and updated transaction appears on dashboard
         composeTestRule.waitUntil(5000) {
-            composeTestRule.onAllNodesWithText("Edit transaction").fetchSemanticsNodes().isEmpty()
+            composeTestRule.onAllNodesWithText("Edit transaction").fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodes(hasText("Team Dinner at Social Updated") and hasClickAction())
+                    .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNode(hasText("Team Dinner at Social") and hasClickAction()).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Team Dinner at Social Updated") and hasClickAction()).assertIsDisplayed()
     }
 
     @Test
@@ -217,6 +291,11 @@ class MainScreenUiTest {
         // Verify Total Due and Bank name appear on screen (using index 0 in case multiple statements for same bank exist)
         composeTestRule.onAllNodesWithText("Total due")[0].assertIsDisplayed()
         composeTestRule.onAllNodesWithText(parseResult.metadata.bankName)[0].assertIsDisplayed()
+        assertTrue(
+            "Expected non-zero imported statement total due to be displayed",
+            composeTestRule.onAllNodes(hasText("10,009.48", substring = true)).fetchSemanticsNodes().isNotEmpty() ||
+                composeTestRule.onAllNodes(hasText("20,789.41", substring = true)).fetchSemanticsNodes().isNotEmpty()
+        )
 
         // Switch to "Recent spends" subtab using clickable pill
         composeTestRule.onNode(hasText("Recent spends") and hasClickAction()).performClick()

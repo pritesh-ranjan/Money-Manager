@@ -26,12 +26,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
 import com.moneymanager.app.ui.screens.AccountsScreen
 import com.moneymanager.app.ui.screens.AddEditTransactionSheet
 import com.moneymanager.app.ui.screens.CreditCardsScreen
 import com.moneymanager.app.ui.screens.ManageScreen
+import com.moneymanager.app.ui.screens.SettingsSubScreen
 import com.moneymanager.app.ui.screens.StatisticsScreen
 import com.moneymanager.app.ui.screens.TransactionsScreen
 import com.moneymanager.app.ui.theme.*
@@ -52,10 +54,16 @@ fun MainScreen(
     onQuickAddConsumed: () -> Unit = {}
 ) {
     var currentTab by remember { mutableStateOf(BottomTab.TRANSACTIONS) }
+    var pendingSettingsSubScreen by remember { mutableStateOf<SettingsSubScreen?>(null) }
     var showAddTransactionSheet by remember { mutableStateOf(false) }
     var showInsightsScreen by remember { mutableStateOf(false) }
     var initialSheetType by remember { mutableStateOf(TransactionType.EXPENSE) }
     var editingTransaction by remember { mutableStateOf<TransactionWithDetails?>(null) }
+
+    fun navigateToSettings(subScreen: SettingsSubScreen) {
+        pendingSettingsSubScreen = subScreen
+        currentTab = BottomTab.MANAGE
+    }
 
     LaunchedEffect(quickAddType) {
         if (quickAddType != null) {
@@ -226,6 +234,14 @@ fun MainScreen(
                             editingTransaction = item
                             initialSheetType = item.transaction.type
                             showAddTransactionSheet = true
+                        },
+                        onNavigateToAccountTypes = {
+                            navigateToSettings(SettingsSubScreen.ACCOUNT_TYPES)
+                        },
+                        onNavigateToInstitutions = { kind ->
+                            navigateToSettings(
+                                if (kind == InstitutionKind.PLATFORM) SettingsSubScreen.PLATFORMS else SettingsSubScreen.BANKS
+                            )
                         }
                     )
 
@@ -237,12 +253,19 @@ fun MainScreen(
                             showAddTransactionSheet = true
                         },
                         onOpenGmailImporter = {
-                            currentTab = BottomTab.MANAGE
+                            navigateToSettings(SettingsSubScreen.GMAIL_IMPORTER)
+                        },
+                        onNavigateToInstitutions = { kind ->
+                            navigateToSettings(
+                                if (kind == InstitutionKind.PLATFORM) SettingsSubScreen.PLATFORMS else SettingsSubScreen.BANKS
+                            )
                         }
                     )
 
                     BottomTab.MANAGE -> ManageScreen(
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        externalSubScreen = pendingSettingsSubScreen,
+                        onExternalSubScreenConsumed = { pendingSettingsSubScreen = null }
                     )
                 }
             }
@@ -257,6 +280,18 @@ fun MainScreen(
             onDismiss = {
                 showAddTransactionSheet = false
                 editingTransaction = null
+            },
+            onNavigateToAccountTypes = {
+                showAddTransactionSheet = false
+                editingTransaction = null
+                navigateToSettings(SettingsSubScreen.ACCOUNT_TYPES)
+            },
+            onNavigateToInstitutions = { kind ->
+                showAddTransactionSheet = false
+                editingTransaction = null
+                navigateToSettings(
+                    if (kind == InstitutionKind.PLATFORM) SettingsSubScreen.PLATFORMS else SettingsSubScreen.BANKS
+                )
             }
         )
     }

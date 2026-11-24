@@ -36,8 +36,11 @@ import com.moneymanager.app.data.local.entity.AccountEntity
 import com.moneymanager.app.data.local.entity.AccountType
 import com.moneymanager.app.data.local.entity.CardStatementSummaryRecord
 import com.moneymanager.app.data.local.entity.CardStatementTransactionEntity
+import com.moneymanager.app.data.local.entity.InstitutionKind
 import com.moneymanager.app.data.local.entity.TransactionType
 import com.moneymanager.app.data.local.entity.TransactionWithDetails
+import com.moneymanager.app.data.local.entity.resolvedInstitutionName
+import com.moneymanager.app.data.local.entity.resolvedIsLiability
 import com.moneymanager.app.domain.CreditCardCycleSummary
 import com.moneymanager.app.domain.CurrencyFormatter
 import com.moneymanager.app.domain.cards.CreditCardMappingStorage
@@ -49,6 +52,7 @@ import com.moneymanager.app.ui.screens.cards.CardMappingDialog
 import com.moneymanager.app.ui.screens.cards.CreditCardBrandEmblem
 import com.moneymanager.app.ui.screens.cards.RewardsSummaryDialog
 import com.moneymanager.app.ui.screens.cards.StatementDetailBottomSheet
+import com.moneymanager.app.ui.screens.cards.SyncedCardItem
 import com.moneymanager.app.ui.theme.OneUiTheme
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -67,7 +71,8 @@ enum class CredCardsTab(val title: String) {
 fun CreditCardsScreen(
     viewModel: MainViewModel,
     onEditTransaction: ((TransactionWithDetails) -> Unit)? = null,
-    onOpenGmailImporter: (() -> Unit)? = null
+    onOpenGmailImporter: (() -> Unit)? = null,
+    onNavigateToInstitutions: (InstitutionKind) -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -78,6 +83,10 @@ fun CreditCardsScreen(
     val manualCardSummaries by viewModel.creditCards.collectAsState()
     val allAccounts by viewModel.accounts.collectAsState()
     val allAccountTypes by viewModel.accountTypes.collectAsState()
+    val accountTypesMap by viewModel.accountTypesMap.collectAsState()
+    val banks by viewModel.banks.collectAsState()
+    val platforms by viewModel.platforms.collectAsState()
+    val institutionsMap by viewModel.institutionsMap.collectAsState()
     val allCurrencies by viewModel.allCurrencies.collectAsState()
     val categoriesMap by viewModel.categoriesMap.collectAsState()
 
@@ -118,6 +127,7 @@ fun CreditCardsScreen(
     var cardToPayManual by remember { mutableStateOf<CreditCardCycleSummary?>(null) }
     var cardToEdit by remember { mutableStateOf<AccountEntity?>(null) }
     var showAddCardDialog by remember { mutableStateOf(false) }
+    var pendingCardToMap by remember { mutableStateOf<SyncedCardItem?>(null) }
 
     // Selected filter chip for Recent Spends
     var selectedFilterCardUid by remember { mutableStateOf<String?>(null) }
@@ -129,7 +139,7 @@ fun CreditCardsScreen(
     // Cache reconciliation reports for statements to show red badges on cards
     var reconReportsMap by remember { mutableStateOf<Map<String, StatementReconciliationReport>>(emptyMap()) }
 
-    LaunchedEffect(statementSummaries, unbilledSpends, cardMappings) {
+    LaunchedEffect(statementSummaries, unbilledSpends, cardMappings, allAccounts, institutionsMap) {
         val newMap = mutableMapOf<String, StatementReconciliationReport>()
         for (stmt in statementSummaries) {
             try {
@@ -171,16 +181,16 @@ fun CreditCardsScreen(
     val totalStatementDue = unpaidStatements.sumOf { it.statementTotalDue }
 
     // Combine with manual cards that don't have imported statements
+    val resolvedStatementAccountsById = remember(statementSummaries, allAccounts, cardMappings, institutionsMap) {
+        statementSummaries.associate { stmt ->
+            stmt.statementId to viewModel.resolveStatementCardAccount(stmt)
+        }
+    }
+    val resolvedStatementCardUids = remember(resolvedStatementAccountsById) {
+        resolvedStatementAccountsById.values.mapNotNull { it?.uid }.toSet()
+    }
     val manualCardsWithoutStatements = manualCardSummaries.filter { manualCard ->
-        val isMappedToStatement = statementSummaries.any { stmt ->
-            val mappedUid = CreditCardMappingStorage.getMappedAccountUid(context, stmt.bankId, stmt.accountOrCardNumberMasked)
-            mappedUid == manualCard.accountUid
-        }
-        !isMappedToStatement && statementSummaries.none { stmt ->
-            stmt.accountOrCardNumberMasked.takeLast(4) == manualCard.cardName.takeLast(4) ||
-                stmt.bankName.contains(manualCard.cardName, ignoreCase = true) ||
-                manualCard.cardName.contains(stmt.bankName, ignoreCase = true)
-        }
+        manualCard.accountUid !in resolvedStatementCardUids
     }
     val totalManualDue = manualCardsWithoutStatements.sumOf { it.remainingStatementDue }
     val consolidatedTotalDue = totalStatementDue + totalManualDue
@@ -202,7 +212,7 @@ fun CreditCardsScreen(
     }
 
     val totalUnbilledAmount = remember(filteredSpends) {
-        filteredSpends.sumOf { it.transaction.accountAmount }
+        filteredSpends.sumOf { it.transaction.baseAmount }
     }
 
     val groupedSpends = remember(filteredSpends) {
@@ -312,7 +322,15 @@ fun CreditCardsScreen(
                                 onClick = {
                                     val firstUnpaid = unpaidStatements.firstOrNull()
                                     if (firstUnpaid != null) {
-                                        cardToPayStatement = firstUnpaid
+                                        if (viewModel.resolveStatementCardAccount(firstUnpaid) != null) {
+                                            cardToPayStatement = firstUnpaid
+                                        } else {
+                                            cardToMapPreselectedKey = CreditCardMappingStorage.buildCardKey(
+                                                firstUnpaid.bankId,
+                                                firstUnpaid.accountOrCardNumberMasked
+                                            )
+                                            showCardMappingDialog = true
+                                        }
                                     } else {
                                         cardToPayManual = manualCardsWithoutStatements.firstOrNull()
                                     }
@@ -340,7 +358,7 @@ fun CreditCardsScreen(
 
             // Unmapped Synced Cards Alert Banner
             val hasUnmappedCards = statementSummaries.any { stmt ->
-                CreditCardMappingStorage.getMappedAccountUid(context, stmt.bankId, stmt.accountOrCardNumberMasked) == null
+                resolvedStatementAccountsById[stmt.statementId] == null
             }
             if (hasUnmappedCards && statementSummaries.isNotEmpty()) {
                 item(key = "unmapped_cards_banner") {
@@ -648,18 +666,29 @@ fun CreditCardsScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
 
                                 manualCardsWithoutStatements.forEachIndexed { index, manualCard ->
+                                    val manualAccount = allAccounts.firstOrNull { it.account.uid == manualCard.accountUid }?.account
+                                    val manualBankName = manualAccount?.resolvedInstitutionName(institutionsMap)
+                                    val manualMasked = manualAccount?.accountNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+                                        if (raw.length > 4) "••${raw.takeLast(4)}" else raw
+                                    }
+                                    val manualSubtitle = listOfNotNull(
+                                        manualBankName,
+                                        manualAccount?.cardNetwork?.displayName,
+                                        manualMasked
+                                    ).ifEmpty { listOf("Manual Ledger Tracker") }.joinToString(" • ")
+
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(14.dp))
                                             .clickable {
-                                                cardToEdit = allAccounts.firstOrNull { it.account.uid == manualCard.accountUid }?.account
+                                                cardToEdit = manualAccount
                                             }
                                             .padding(vertical = 10.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         CreditCardBrandEmblem(
-                                            bankName = manualCard.cardName,
+                                            bankName = manualBankName ?: manualCard.cardName,
                                             size = 40.dp
                                         )
                                         Spacer(modifier = Modifier.width(14.dp))
@@ -674,7 +703,7 @@ fun CreditCardsScreen(
                                             )
                                             Spacer(modifier = Modifier.height(2.dp))
                                             Text(
-                                                text = "Manual Ledger Tracker",
+                                                text = manualSubtitle,
                                                 style = MaterialTheme.typography.bodySmall.copy(
                                                     color = OneUiTheme.colors.textSecondary,
                                                     fontSize = 12.5.sp
@@ -827,34 +856,37 @@ fun CreditCardsScreen(
 
     // Statement Detail Bottom Sheet (shows PDF statement line items & RED discrepancies)
     selectedStatementForDetail?.let { stmt ->
-        val mappedUid = CreditCardMappingStorage.getMappedAccountUid(context, stmt.bankId, stmt.accountOrCardNumberMasked)
-        val mappedAcc = allAccounts.firstOrNull { it.account.uid == mappedUid }
+        val resolvedAcc = resolvedStatementAccountsById[stmt.statementId]
+            ?: viewModel.resolveStatementCardAccount(stmt)
 
         StatementDetailBottomSheet(
             summary = stmt,
             transactions = statementTransactionsForDetail,
             reconciliationReport = statementReconReportForDetail,
-            mappedAccountName = mappedAcc?.account?.name,
+            mappedAccountName = resolvedAcc?.name,
             onOpenCardMapping = {
                 cardToMapPreselectedKey = CreditCardMappingStorage.buildCardKey(stmt.bankId, stmt.accountOrCardNumberMasked)
                 showCardMappingDialog = true
             },
             onDismiss = { selectedStatementForDetail = null },
             onPayBill = {
-                cardToPayStatement = stmt
                 selectedStatementForDetail = null
+                if (resolvedAcc != null) {
+                    cardToPayStatement = stmt
+                } else {
+                    cardToMapPreselectedKey = CreditCardMappingStorage.buildCardKey(
+                        stmt.bankId,
+                        stmt.accountOrCardNumberMasked
+                    )
+                    showCardMappingDialog = true
+                }
             },
             onTogglePaid = { isPaid ->
                 viewModel.markStatementPaid(stmt.statementId, isPaid)
                 selectedStatementForDetail = null
             },
             onAddTxToLedger = { stmtTx ->
-                val matchingAccount = (if (!mappedUid.isNullOrBlank()) allAccounts.firstOrNull { it.account.uid == mappedUid }?.account else null)
-                    ?: allAccounts.firstOrNull {
-                        it.account.accountType == AccountType.CREDIT_CARD &&
-                            (it.account.name.contains(stmt.accountOrCardNumberMasked.takeLast(4)) ||
-                                it.account.name.contains(stmt.bankName, ignoreCase = true))
-                    }?.account
+                val matchingAccount = resolvedAcc
                     ?: allAccounts.firstOrNull { it.account.accountType == AccountType.CREDIT_CARD }?.account
 
                 if (matchingAccount != null) {
@@ -877,14 +909,15 @@ fun CreditCardsScreen(
     // Bill Payment Dialog for Statement
     cardToPayStatement?.let { stmt ->
         val bankAccounts = allAccounts.filter {
-            it.account.accountType in listOf(AccountType.SAVINGS, AccountType.CASH, AccountType.UPI_DEBIT)
+            !it.account.resolvedIsLiability(accountTypesMap)
         }
         var selectedFromUid by remember {
             mutableStateOf(bankAccounts.firstOrNull()?.account?.uid ?: "")
         }
         var paymentAmountStr by remember {
-            mutableStateOf(String.format(Locale.getDefault(), "%.2f", stmt.statementTotalDue))
+            mutableStateOf(String.format(Locale.US, "%.2f", stmt.statementTotalDue))
         }
+        val selectedFromSymbol = bankAccounts.firstOrNull { it.account.uid == selectedFromUid }?.currency?.symbol ?: "₹"
 
         OneUiBottomDialog(
             onDismissRequest = { cardToPayStatement = null },
@@ -938,7 +971,7 @@ fun CreditCardsScreen(
                 TextField(
                     value = paymentAmountStr,
                     onValueChange = { paymentAmountStr = it },
-                    label = { Text("Payment Amount (₹)") },
+                    label = { Text("Payment Amount ($selectedFromSymbol)") },
                     shape = RoundedCornerShape(18.dp),
                     colors = TextFieldDefaults.colors(
                         focusedTextColor = OneUiTheme.colors.textPrimary,
@@ -957,11 +990,13 @@ fun CreditCardsScreen(
     // Bill Payment Dialog for Manual Card
     cardToPayManual?.let { manualCycle ->
         val bankAccounts = allAccounts.filter {
-            it.account.accountType in listOf(AccountType.SAVINGS, AccountType.CASH, AccountType.UPI_DEBIT)
+            !it.account.resolvedIsLiability(accountTypesMap)
         }
+        val cardCurrencySymbol = allAccounts.firstOrNull { it.account.uid == manualCycle.accountUid }?.currency?.symbol ?: "₹"
         OneUiPayBillDialog(
             summary = manualCycle,
             availableBankAccounts = bankAccounts.map { it.account },
+            currencySymbol = cardCurrencySymbol,
             onDismiss = { cardToPayManual = null },
             onConfirm = { fromAccountUid, amount ->
                 viewModel.payCreditCard(manualCycle, fromAccountUid, amount)
@@ -972,13 +1007,30 @@ fun CreditCardsScreen(
 
     // Add / Edit Card Dialogs
     if (showAddCardDialog) {
+        val prefillLast4 = pendingCardToMap?.let { CreditCardMappingStorage.extractLast4Digits(it.cardMasked) }
+        val prefillName = pendingCardToMap?.let { target ->
+            if (!prefillLast4.isNullOrBlank()) "${target.bankName} $prefillLast4" else target.bankName
+        }
+        val prefillInstitutionUid = pendingCardToMap?.let { target ->
+            CreditCardMappingStorage.findMatchingBankInstitution(target.bankName, banks)?.uid
+        }
+
         OneUiAddEditAccountDialog(
             existingAccount = null,
             defaultAccountType = AccountType.CREDIT_CARD,
+            skipTypeSelection = true,
+            initialName = prefillName,
+            initialAccountNumber = prefillLast4,
+            initialInstitutionUid = prefillInstitutionUid,
             accountTypes = allAccountTypes,
+            banks = banks,
+            platforms = platforms,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
-            onDismiss = { showAddCardDialog = false },
+            onDismiss = {
+                showAddCardDialog = false
+                pendingCardToMap = null
+            },
             onSave = { newCard ->
                 val normalized = if (newCard.accountType != AccountType.CREDIT_CARD) {
                     newCard.copy(
@@ -989,7 +1041,18 @@ fun CreditCardsScreen(
                     newCard
                 }
                 viewModel.saveAccount(normalized)
+                pendingCardToMap?.let { target ->
+                    viewModel.setCardMapping(target.bankId, target.cardMasked, normalized.uid)
+                }
+                pendingCardToMap = null
                 showAddCardDialog = false
+            },
+            onSaveAccountType = { viewModel.saveAccountType(it) },
+            onSaveInstitution = { viewModel.saveInstitution(it) },
+            onNavigateToInstitutions = { kind ->
+                pendingCardToMap = null
+                showAddCardDialog = false
+                onNavigateToInstitutions(kind)
             }
         )
     }
@@ -997,7 +1060,10 @@ fun CreditCardsScreen(
     cardToEdit?.let { card ->
         OneUiAddEditAccountDialog(
             existingAccount = card,
+            skipTypeSelection = true,
             accountTypes = allAccountTypes,
+            banks = banks,
+            platforms = platforms,
             currencies = allCurrencies,
             existingAccounts = allAccounts.map { it.account },
             onDismiss = { cardToEdit = null },
@@ -1008,6 +1074,12 @@ fun CreditCardsScreen(
             onDelete = { cardToDelete ->
                 viewModel.deleteAccount(cardToDelete)
                 cardToEdit = null
+            },
+            onSaveAccountType = { viewModel.saveAccountType(it) },
+            onSaveInstitution = { viewModel.saveInstitution(it) },
+            onNavigateToInstitutions = { kind ->
+                cardToEdit = null
+                onNavigateToInstitutions(kind)
             }
         )
     }
@@ -1092,14 +1164,16 @@ fun CreditCardsScreen(
             viewModel = viewModel,
             statements = statementSummaries,
             allAccounts = allAccounts,
+            institutionsMap = institutionsMap,
             initialSelectedCardKey = cardToMapPreselectedKey,
             onDismiss = {
                 showCardMappingDialog = false
                 cardToMapPreselectedKey = null
             },
-            onAddNewCardAccount = {
+            onAddNewCardAccount = { targetCard ->
                 showCardMappingDialog = false
                 cardToMapPreselectedKey = null
+                pendingCardToMap = targetCard
                 showAddCardDialog = true
             }
         )
@@ -1110,6 +1184,7 @@ fun CreditCardsScreen(
 fun OneUiPayBillDialog(
     summary: CreditCardCycleSummary,
     availableBankAccounts: List<AccountEntity>,
+    currencySymbol: String = "₹",
     onDismiss: () -> Unit,
     onConfirm: (fromAccountUid: String, amount: Double) -> Unit
 ) {
@@ -1122,7 +1197,7 @@ fun OneUiPayBillDialog(
         mutableFloatStateOf(summary.remainingStatementDue.coerceAtLeast(0.0).toFloat())
     }
     var paymentAmountStr by remember {
-        mutableStateOf(String.format(Locale.getDefault(), "%.2f", summary.remainingStatementDue.coerceAtLeast(0.0)))
+        mutableStateOf(String.format(Locale.US, "%.2f", summary.remainingStatementDue.coerceAtLeast(0.0)))
     }
 
     OneUiBottomDialog(
@@ -1188,7 +1263,7 @@ fun OneUiPayBillDialog(
                         sliderValue = f.coerceIn(0f, maxPayable.toFloat())
                     }
                 },
-                label = { Text("Payment Amount (₹)") },
+                label = { Text("Payment Amount ($currencySymbol)") },
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
                 ),
@@ -1209,7 +1284,7 @@ fun OneUiPayBillDialog(
                 value = sliderValue,
                 onValueChange = { f ->
                     sliderValue = f
-                    paymentAmountStr = String.format(Locale.getDefault(), "%.2f", f)
+                    paymentAmountStr = String.format(Locale.US, "%.2f", f)
                 },
                 valueRange = 0f..maxPayable.toFloat(),
                 activeColor = OneUiTheme.colors.primaryAccent
@@ -1222,7 +1297,7 @@ fun OneUiPayBillDialog(
                     onClick = {
                         val due = summary.remainingStatementDue.toFloat()
                         sliderValue = due
-                        paymentAmountStr = String.format(Locale.getDefault(), "%.2f", due)
+                        paymentAmountStr = String.format(Locale.US, "%.2f", due)
                     },
                     modifier = Modifier.weight(1f)
                 )
@@ -1233,7 +1308,7 @@ fun OneUiPayBillDialog(
                     onClick = {
                         val total = summary.totalOutstanding.toFloat()
                         sliderValue = total
-                        paymentAmountStr = String.format(Locale.getDefault(), "%.2f", total)
+                        paymentAmountStr = String.format(Locale.US, "%.2f", total)
                     },
                     modifier = Modifier.weight(1f)
                 )

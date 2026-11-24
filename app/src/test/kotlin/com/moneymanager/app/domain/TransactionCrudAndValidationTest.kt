@@ -624,4 +624,64 @@ class TransactionCrudAndValidationTest {
         assertEquals("HDFC Savings", foundTransfer?.account?.name)
         assertEquals("Amazon Pay Balance", foundTransfer?.toAccount?.name)
     }
+
+    @Test
+    fun testEditTransactionWithSoftDeletedCategory_retainsExistingCategoryButRejectsSwitchingToDeletedCategory() = runTest {
+        val tempCat = CategoryEntity("cat_temp_del", "Temp Dining", CategoryType.EXPENSE)
+        val otherDeletedCat = CategoryEntity("cat_other_del", "Other Deleted", CategoryType.EXPENSE, isDeleted = true)
+        dao.insertCategories(listOf(tempCat, otherDeletedCat))
+
+        val tx = TransactionEntity(
+            uid = "tx_deleted_cat_edit",
+            type = TransactionType.EXPENSE,
+            accountAmount = 300.0,
+            baseAmount = 300.0,
+            currencyUid = inr.uid,
+            accountUid = savingsAccount.uid,
+            categoryUid = tempCat.uid,
+            note = "Lunch"
+        )
+        repository.saveTransaction(tx)
+
+        // Soft-delete the category after transaction was created
+        repository.deleteCategory(tempCat.uid)
+
+        // Updating amount/note while keeping the already-assigned soft-deleted category must succeed
+        repository.saveTransaction(tx.copy(accountAmount = 350.0, note = "Lunch Updated"))
+        val updated = dao.getTransactionById("tx_deleted_cat_edit")
+        assertNotNull(updated)
+        assertEquals(350.0, updated!!.transaction.accountAmount, 0.001)
+        assertEquals(tempCat.uid, updated.transaction.categoryUid)
+
+        // Switching to a different soft-deleted category must still fail
+        try {
+            repository.saveTransaction(tx.copy(categoryUid = otherDeletedCat.uid))
+            fail("Expected IllegalArgumentException when switching to another deleted category")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("deleted category", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun testCrossCurrencyTransfer_autoConvertsEvenWhenRawSourceAmountWasProvidedInToAccountAmount() = runTest {
+        val transferTx = TransactionEntity(
+            uid = "tx_xfer_raw_dup",
+            type = TransactionType.TRANSFER,
+            accountAmount = 8400.0,
+            baseAmount = 8400.0,
+            exchangeRate = 1.0,
+            currencyUid = inr.uid,
+            accountUid = savingsAccount.uid,
+            toAccountUid = usdAccount.uid,
+            toAccountAmount = 8400.0
+        )
+        repository.saveTransaction(transferTx)
+
+        val saved = dao.getTransactionById("tx_xfer_raw_dup")
+        assertNotNull(saved)
+        assertEquals(100.0, saved!!.transaction.toAccountAmount!!, 0.001)
+
+        val nw = repository.netWorthSummary.first()!!
+        assertEquals(50000.0, nw.netWorthBase, 0.001)
+    }
 }
