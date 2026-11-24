@@ -23,8 +23,8 @@ android {
     applicationId = "com.moneymanager.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 22
-    versionName = "2.0.13"
+    versionCode = 23
+    versionName = "2.0.14"
   }
 
   signingConfigs {
